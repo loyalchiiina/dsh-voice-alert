@@ -1622,12 +1622,13 @@ if (skipSound) {
   const probeFile = sfxPathFor("remind-crisp", sfxCfg);
   const run = spawnSync(
     "E:\\Python311\\python.exe",
-    [join(import.meta.dirname, "..", "lib", "play_mp3_mci.py"), "--file", probeFile, "--log-file", probeLog],
+    // 显式要求预热：默认是不预热的（见 11e 段），这里验证"需要时预热仍然可用"。
+    [join(import.meta.dirname, "..", "lib", "play_mp3_mci.py"), "--file", probeFile, "--prewarm-ms", "350", "--log-file", probeLog],
     { encoding: "utf8", windowsHide: true, timeout: 30000 },
   );
   const probeText = existsSync(probeLog) ? readFileSync(probeLog, "utf8") : "";
   check("bundled player exits 0 on a real file", run.status === 0, String(run.status) + " stderr=" + String(run.stderr).slice(0, 200));
-  check("real run logged the prewarm step", probeText.indexOf("prewarm ok") >= 0, probeText.slice(0, 300));
+  check("显式 --prewarm-ms 时仍然会预热（能力保留）", probeText.indexOf("prewarm ok") >= 0, probeText.slice(0, 300));
   check("real run logged a successful play with position samples", /played play_rc=0/.test(probeText) && /positions=\d+/.test(probeText), probeText.slice(0, 400));
   const issuedMatch = /\+(\d+)ms play issued/.exec(probeText);
   const openMatch = /\+(\d+)ms mci open/.exec(probeText);
@@ -1644,6 +1645,19 @@ if (skipSound) {
 }
 
 // ------------------------------------------------- 12. 备选播放内核：waveOut/WAV（v0.3.9）
+
+section("11e. 默认不预热（v0.4.3：实测预热会打断蓝牙耳机上正在播的音乐）");
+check("默认 prewarmMs = 0（不预热）", DEFAULT_CONFIG.prewarmMs === 0, String(DEFAULT_CONFIG.prewarmMs));
+const noWarmCmd = buildPlayCommand("complete", shapeConfig);
+check("默认播放命令带 --no-prewarm", noWarmCmd.inner.indexOf("'--no-prewarm'") > 0, noWarmCmd.inner);
+const warmCmd = buildPlayCommand("complete", Object.assign({}, shapeConfig, { prewarmMs: 350 }));
+check(
+  "显式配置 prewarmMs=350 时改传 --prewarm-ms 350（能力保留）",
+  warmCmd.inner.indexOf("'--prewarm-ms'") > 0 && warmCmd.inner.indexOf("'350'") > 0,
+  warmCmd.inner,
+);
+const noWarmWavCmd = buildWavPlayCommand("C:\\cache\\x.wav", shapeConfig);
+check("wav 命令同样默认不预热", noWarmWavCmd.inner.indexOf("'--no-prewarm'") >= 0, noWarmWavCmd.inner);
 
 section("12a. 播放内核开关（默认 mci = 行为不变）");
 check(
@@ -1699,7 +1713,7 @@ if (skipSound) {
   const wavLog = join(tmpDir, "wav-player.log");
   const runWav = spawnSync(
     "E:\\Python311\\python.exe",
-    [join(import.meta.dirname, "..", "lib", "play_wav_out.py"), "--file", builtWav.file, "--log-file", wavLog],
+    [join(import.meta.dirname, "..", "lib", "play_wav_out.py"), "--file", builtWav.file, "--prewarm-ms", "350", "--log-file", wavLog],
     { encoding: "utf8", windowsHide: true, timeout: 30000 },
   );
   const wavText = existsSync(wavLog) ? readFileSync(wavLog, "utf8") : "";

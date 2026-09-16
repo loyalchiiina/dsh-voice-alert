@@ -66,13 +66,17 @@ def log_line(log_path, message):
         pass
 
 
-def prewarm_silence(log_path):
-    """350ms 静音预热（串行执行，见文件头说明）。"""
+def prewarm_silence(log_path, prewarm_ms=PREWARM_MS):
+    """静音预热（串行执行，见文件头说明）。
+
+    🔴 默认不再使用（宿主默认传 --no-prewarm）：实测预热会在播报前多开关一次音频端点，
+    从而打断蓝牙耳机上正在播放的音乐（2026-09-16）。
+    """
     try:
         import winsound
 
-        log_line(log_path, "prewarm start (%d ms silence)" % PREWARM_MS)
-        winsound.PlaySound(make_silence_wav(PREWARM_MS), winsound.SND_MEMORY)
+        log_line(log_path, "prewarm start (%d ms silence)" % prewarm_ms)
+        winsound.PlaySound(make_silence_wav(prewarm_ms), winsound.SND_MEMORY)
         log_line(log_path, "prewarm ok")
         return True
     except Exception as error:
@@ -113,14 +117,20 @@ def main():
     parser.add_argument("--file", required=True, help="absolute path of the WAV to play")
     parser.add_argument("--log-file", default="", help="optional diagnostics log")
     parser.add_argument("--no-prewarm", action="store_true", help="skip the silence prewarm (diagnosis)")
+    parser.add_argument(
+        "--prewarm-ms",
+        type=int,
+        default=PREWARM_MS,
+        help="prewarm silence length in ms (default %d); the host normally passes --no-prewarm" % PREWARM_MS,
+    )
     args = parser.parse_args()
     log_line(args.log_file, "boot (wav engine)")
     if not os.path.exists(args.file):
         log_line(args.log_file, "file missing: " + args.file)
         print("WAV_MISSING " + args.file, file=sys.stderr)
         return 3
-    if not args.no_prewarm:
-        prewarm_silence(args.log_file)
+    if not args.no_prewarm and args.prewarm_ms > 0:
+        prewarm_silence(args.log_file, args.prewarm_ms)
         time.sleep(PREWARM_SETTLE_SECONDS)
     return play_wav(args.file, args.log_file)
 
