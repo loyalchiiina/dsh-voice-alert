@@ -72,6 +72,7 @@ import {
   prunePlaybackCopies,
   resolveAudio,
   resolvePlayerEngine,
+  resolvePython,
   sfxPathFor,
   tryPlayViaWav,
   wavCacheFileFor,
@@ -993,10 +994,15 @@ if (skipSound) {
     /Start-Process|play launched \(wav engine\)/u.test(soundLog.join(" ")),
     soundLog.join(" | "),
   );
+  // 播放是异步启动的（子进程），不等它放完，后面的用例就会和这条叠在一起响
+  // （实测：语音和鸟鸣一起叫）。这里等到它播完（complete 语音约 5.1s）再往下走。
+  await sleep(6000);
 
   // 4c) synchronous player runs: exit code 0 + wall time prove the audio path works
+  // pythonPath 默认是 PATH 名（"python"），本机可能命中 WindowsApps 存根 → 用解析后的真实解释器。
+  const realPython = resolvePython(shapeConfig).path;
   const runs = [
-    { label: "loud file through the bundled player", python: shapeConfig.pythonPath, args: ["-u", bundledPlayerPath(shapeConfig), "--file", loudFileFor("complete", shapeConfig)] },
+    { label: "loud file through the bundled player", python: realPython, args: ["-u", bundledPlayerPath(shapeConfig), "--file", loudFileFor("complete", shapeConfig)] },
   ];
   // 共享播放器是**可选**的（开源默认不配，只用自带播放器）。要覆盖这条就把真实路径放进环境变量：
   //   $env:DVA_SHARED_PLAYER = "<dir>\notify_voice_player.py"; node test/self-check.mjs
@@ -1214,8 +1220,15 @@ const unsafeSfx = playSfx("../../evil", Object.assign({}, sfxCfg, { fallbackBeep
 check("unsafe key -> unsafe-key, no throw", unsafeSfx.ok === false && unsafeSfx.reason === "unsafe-key", JSON.stringify(unsafeSfx));
 const absentSfx = playSfx("nature-nonexistent", Object.assign({}, sfxCfg, { fallbackBeep: false }), () => {});
 check("missing file -> refused (beep disabled)", absentSfx.ok === false && absentSfx.beep === false, JSON.stringify(absentSfx));
-const noPythonSfx = playSfx("nature-bird", Object.assign({}, sfxCfg, { fallbackBeep: false, pythonPath: "C:\\nope\\python.exe" }), () => {});
-check("missing python -> refused, nothing launched", noPythonSfx.ok === false, JSON.stringify(noPythonSfx));
+// 现在会**解析真实可用的 python**（开放源码后的行为）：配错 pythonPath 也会被救回来、
+// 照常播放。所以这条改成验证"救得回来"，并且只在完整模式下跑（它会真出声，用最短音效）。
+if (skipSound) {
+  console.log("  SKIP  (--no-sound：这条现在会真播放，因为 pythonPath 会被解析器救回来)");
+} else {
+  const noPythonSfx = playSfx("remind-crisp", Object.assign({}, sfxCfg, { fallbackBeep: false, pythonPath: "C:\\nope\\python.exe" }), () => {});
+  check("pythonPath 配错也会被解析器救回来（照常播放）", noPythonSfx.ok === true, JSON.stringify(noPythonSfx));
+  await sleep(1200); // 等这条短音效放完，别和后面的真实播放叠在一起响
+}
 
 section("9e. 可编辑 patch：enabled / alertMode / sfxByKind 白名单");
 const okPatch = normalizeEditablePatch({
@@ -1358,18 +1371,22 @@ const sfxPlayRoute = sfxRouted.ctx._routes.find((route) => route.path === "/dsh-
 const sfxBadRes = fakeRes();
 await sfxPlayRoute.handler(fakeReq("/dsh-voice-alert/sfx/play?name=../../evil"), sfxBadRes);
 check("play refuses a non-catalogue name (400)", sfxBadRes.status === 400, String(sfxBadRes.status));
-// A real audition would be audible, so this instance points pythonPath at a
-// non-existent interpreter: the route still exercises the full branch, but nothing
-// can ever be launched from a self-check run.
+// 这里曾用"配一个不存在的 pythonPath"来保证自测不出声；但现在插件会**解析真实可用的解释器**
+// （开源：默认值是 PATH 名，可能命中 WindowsApps 存根），所以配错也会被救回来、播放照常成功
+// —— 这正是想要的行为。于是断言改成"配错也能播"，并只在完整模式跑（它会真出声，用最短音效）。
 const quietSfx = mount({ pythonPath: "C:\\nope\\python.exe", fallbackBeep: false }, { tmpDir, webServer: true });
 const quietPlayRoute = quietSfx.ctx._routes.find((route) => route.path === "/dsh-voice-alert/sfx/play");
-const quietRes = fakeRes();
-await quietPlayRoute.handler(fakeReq("/dsh-voice-alert/sfx/play?name=nature-bird"), quietRes);
-check(
-  "play accepts a catalogue name (nothing launched without python)",
-  quietRes.status === 200 && JSON.parse(quietRes.body).ok === false,
-  quietRes.body,
-);
+if (skipSound) {
+  console.log("  SKIP  (--no-sound：这条现在会真播放，因为 pythonPath 会被解析器救回来)");
+} else {
+  const quietRes = fakeRes();
+  await quietPlayRoute.handler(fakeReq("/dsh-voice-alert/sfx/play?name=remind-crisp"), quietRes);
+  check(
+    "play accepts a catalogue name（pythonPath 配错也会被解析器救回来）",
+    quietRes.status === 200 && JSON.parse(quietRes.body).ok === true,
+    quietRes.body,
+  );
+}
 
 section("9i. /settings 回显提醒方式与音效目录");
 const sfxSettingsRouted = mount({}, { tmpDir, webServer: true });
@@ -1688,6 +1705,31 @@ if (skipSound) {
   const wavText = existsSync(wavLog) ? readFileSync(wavLog, "utf8") : "";
   check("wav 播放器退出 0", runWav.status === 0, String(runWav.status) + " " + String(runWav.stderr).slice(0, 200));
   check("wav 日志含预热 + 播放完成", wavText.indexOf("prewarm ok") >= 0 && wavText.indexOf("played (waveOut") >= 0, wavText.slice(0, 300));
+}
+
+// ------------------------------------------------- 13. python 解释器解析（开源关键）
+
+section("13. python 解析：不写死本机路径，也不被 Windows 应用商店存根骗");
+check("默认值是 PATH 名而非本机绝对路径", DEFAULT_CONFIG.pythonPath === "python", String(DEFAULT_CONFIG.pythonPath));
+const resolvedPy = resolvePython({ pythonPath: "python" }, { noCache: true });
+check(
+  "解析出的解释器真实存在（或明确 fallback）",
+  resolvedPy.source === "fallback" || existsSync(resolvedPy.path),
+  JSON.stringify(resolvedPy),
+);
+check("解析结果不是 WindowsApps 存根", !/WindowsApps/iu.test(resolvedPy.path), resolvedPy.path);
+const cacheA = resolvePython({ pythonPath: "python" });
+const cacheB = resolvePython({ pythonPath: "python" });
+check("重复调用命中缓存（路径一致，不再 spawn）", cacheA.path === cacheB.path, cacheA.path);
+if (existsSync(resolvedPy.path) && resolvedPy.source !== "fallback") {
+  const explicit = resolvePython({ pythonPath: resolvedPy.path }, { noCache: true });
+  check(
+    "显式配置的解释器被优先采用",
+    explicit.path === resolvedPy.path && explicit.source === resolvedPy.path,
+    JSON.stringify(explicit),
+  );
+} else {
+  console.log("  SKIP  显式配置优先（本机没解析到可用 python）");
 }
 
 // ---------------------------------------------------------------- summary
