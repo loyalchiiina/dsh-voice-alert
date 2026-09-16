@@ -1,0 +1,29 @@
+# 依赖与构建产物
+node_modules/
+dist/
+*.log
+
+# Python 缓存（play_mp3_mci.py / play_wav_out.py 运行后会生成）
+__pycache__/
+*.pyc
+*.pyo
+
+# 本机运行时数据与敏感配置（插件的 Key/音色库只存 <home>/.dsh/data/，不应进仓库）
+config.json
+*.local.json
+*.bak
+*.bak-*
+
+# 本机专属开发/部署脚本（硬编码本机绝对路径与外部私有依赖，对外部使用者无意义，不进开源包）
+dev-*.ps1
+
+# 音频产物（离线生成的语音/缓存，体积大且属个人数据）
+wav-cache/
+*-loud.mp3
+audio/
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+Thumbs.db
+Desktop.ini

@@ -1,0 +1,25 @@
+# dsh-voice-alert - host-only bundle row.
+#
+# The plugin lives on the host half only: it listens to `session/event`
+# (turn/start, turn/end), `agent/error` and `tools/result` and plays a fixed
+# MP3 through a detached powershell Start-Process chain. There is no client
+# bundle, no UI, nothing mounted into the browser.
+#
+# All tunables have defaults, so this row carries no `config` on purpose. To
+# override one of them without touching
+# <home>/.dsh/data/dsh-voice-alert/config.json, uncomment and edit:
+#
+#   - insert:
+#       - id: dsh-voice-alert
+#         name: dsh-voice-alert
+#         config:
+#           enabled: false            # turn every alert off (default: true)
+#           playOnTurnEnd: true       # one alert per finished turn (default: true)
+#           playFailOnError: true     # immediate alert on error (default: true)
+#           errorMinIntervalMs: 5000  # error alert throttle (default: 5000)
+#           abortPlays: none          # aborted (user cancel) turns: none|complete|fail
+#           skipSubagentSessions: true# do not alert for subagent turns (default: true)
+#
+- insert:
+    - id: dsh-voice-alert
+      name: dsh-voice-alert
