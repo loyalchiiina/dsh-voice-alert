@@ -1,7 +1,7 @@
 {
   "name": "dsh-voice-alert",
-  "version": "0.4.5",
-  "description": "让 DSH 干完活会开口说话：每个回合结束自动语音播报「完成」，出错播报「失败」，审批播报「审批」。零配置开箱即用，内置 20 个音效（提醒 10 + 大自然 10），不需要任何 Key；也可用火山「声音复刻」克隆你自己的音色念三条自定义文案。播放绝不改动系统音量或静音状态。| Make DSH speak up when the job is done: automatic voice announcements for done / failed / approval at the end of every turn. Works out of the box with 20 built-in sounds (10 alerts + 10 nature ambience) and no API key, or clone your own voice on Volcano Engine. Never touches your system volume or mute state.",
+  "version": "0.4.6",
+  "description": "让 DSH 干完活会开口说话：回合结束自动播报「完成/失败/审批」，零配置内置 20 个音效，也可克隆自己的音色。| Make DSH speak when the job is done: auto voice alerts for done/failed/approval, 20 built-in sounds, or clone your own voice.",
   "type": "module",
   "main": "lib/index.js",
   "sideEffects": false,
