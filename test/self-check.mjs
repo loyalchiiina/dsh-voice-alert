@@ -630,10 +630,6 @@ check("playback copy can be disabled by config", preparePlaybackFile("complete",
 section("2o. generation: temp name + retry + change detection");
 check("gain writes a temp name first", tempGainPath("out.mp3", 123) === "out.mp3.tmp-123.mp3", tempGainPath("out.mp3", 123));
 const retryCalls = [];
-// 注意：这里的路径必须是绝对路径（放 tmpDir 下）。用相对名 "from.mp3"/"to.mp3" 会让夹具
-// 把文件写到**当前工作目录**（用户跑自检时就是仓库根目录），留下一个 7 字节的 to.mp3 垃圾文件。
-const fromFixture = join(tmpDir, "rename-from.mp3");
-const toFixture = join(tmpDir, "rename-to.mp3");
 const flakyFs = {
   renameSync(from, to) {
     retryCalls.push(from);
@@ -645,7 +641,7 @@ const flakyFs = {
     writeFileSync(to, "renamed", "utf8");
   },
 };
-const retried = await renameWithRetry(fromFixture, toFixture, { retries: 5, delayMs: 1, fsOps: flakyFs });
+const retried = await renameWithRetry("from.mp3", "to.mp3", { retries: 5, delayMs: 1, fsOps: flakyFs });
 check("rename retries through EPERM and succeeds", retried.ok === true && retried.attempts === 3, JSON.stringify(retried));
 
 const lockTarget = join(playDir, "locked.mp3");
@@ -769,7 +765,7 @@ globalThis.fetch = function (url, init) {
       speaker: "S_TESTCLONE001",
       voiceNote: "备注X",
       apiKeyPresent: true,
-      apiKeyMask: "TESTKEY0…",
+      apiKeyMask: "79c7597c…",
       persisted: { ok: true, skipped: false },
       applied: { texts: {}, prosody: {}, tts: { apiKey: "X" }, voiceNote: "备注X" },
     });
@@ -780,9 +776,9 @@ globalThis.fetch = function (url, init) {
       texts: { complete: "完成文案", fail: "失败文案", approval: "审批文案" },
       prosody: { speed_ratio: 1.05, pitch_ratio: 1.04, volume_ratio: 1 },
       speaker: "S_TESTCLONE001",
-      voiceNote: "测试音色 · 示例备注",
+      voiceNote: "测试音色 · 读诗腔",
       apiKeyPresent: true,
-      apiKeyMask: "TESTKEY0…",
+      apiKeyMask: "79c7597c…",
       keyStorageNote: "KEY-NOTE",
       voicePolicyNote: "VOICE-POLICY",
       systemVolume: { ok: true, volumePercent: 54, muted: false, source: "audio_state.py (read-only)" },
@@ -866,11 +862,11 @@ await sleep(50);
 check(
   "loadSettings filled the inputs from the host payload",
   domNodes.get("dva-text-complete").value === "完成文案" &&
-    domNodes.get("dva-voice-note").value === "测试音色 · 示例备注" &&
+    domNodes.get("dva-voice-note").value === "测试音色 · 读诗腔" &&
     domNodes.get("dva-speed_ratio").value === "1.05",
   JSON.stringify({ complete: domNodes.get("dva-text-complete").value, note: domNodes.get("dva-voice-note").value, speed: domNodes.get("dva-speed_ratio").value }),
 );
-check("key state shows a mask, not the key", domNodes.get("dva-key-state").textContent.indexOf("TESTKEY0…") >= 0, domNodes.get("dva-key-state").textContent);
+check("key state shows a mask, not the key", domNodes.get("dva-key-state").textContent.indexOf("79c7597c…") >= 0, domNodes.get("dva-key-state").textContent);
 check("local-only key note rendered from the host payload", domNodes.get("dva-key-note").textContent === "KEY-NOTE", domNodes.get("dva-key-note").textContent);
 check("system volume is displayed read-only", domNodes.get("dva-volume").textContent.indexOf("54%") >= 0, domNodes.get("dva-volume").textContent);
 check("generate is enabled once the key is known present", domNodes.get("dva-generate").disabled === false, String(domNodes.get("dva-generate").disabled));
@@ -879,7 +875,7 @@ domNodes.get("dva-tts-key").value = "NEWKEY-42";
 const postedBefore = clientFetchCalls.length;
 await clientExports.__dvaTest.saveSettings();
 const posted = JSON.parse(clientFetchCalls[clientFetchCalls.length - 1].init.body);
-check("save posts texts + prosody + voiceNote + the new key", Boolean(posted.tts) && posted.tts.apiKey === "NEWKEY-42" && posted.voiceNote === "测试音色 · 示例备注", JSON.stringify(posted));
+check("save posts texts + prosody + voiceNote + the new key", Boolean(posted.tts) && posted.tts.apiKey === "NEWKEY-42" && posted.voiceNote === "测试音色 · 读诗腔", JSON.stringify(posted));
 check("save acknowledged into config.json", domNodes.get("dva-status").textContent.indexOf("已写入 config.json") >= 0, domNodes.get("dva-status").textContent);
 check("the key box is cleared after saving", domNodes.get("dva-tts-key").value === "", domNodes.get("dva-tts-key").value);
 
@@ -1557,24 +1553,15 @@ check(
 globalThis.fetch = realFetch;
 
 section("10e. 试听串行化：路由在设备占用判定下仍正常作答");
-// 这一段会命中真实的 /preview 与 /sfx/play 路由，而路由内部走的是**真实 playSfx**
-// （不是 mount 的 deps.play stub），所以它会真的出声：preview 播完整语音、sfx/play 播音效。
-// 因此整段必须放在 skipSound 守卫内 —— 否则 `--no-sound` 名不副实，跑一次自检就会在
-// 用户机器上放出语音和音效（2026-09-17 实测：跑自检时用户听到鸟叫 natures-bird 6.44s）。
-if (skipSound) {
-  console.log("  SKIP  (--no-sound：这一段会真播放 preview 语音与 sfx 音效)");
-} else {
-  const serialRouted = mount({ pythonPath: "C:\\nope\\python.exe", fallbackBeep: false }, { tmpDir, webServer: true });
-  const serialPreview = serialRouted.ctx._routes.find((route) => route.path === "/dsh-voice-alert/preview");
-  const serialPreviewRes = fakeRes();
-  await serialPreview.handler(fakeReq("/dsh-voice-alert/preview?kind=complete"), serialPreviewRes);
-  check("preview route answers after serialization", serialPreviewRes.status === 200, String(serialPreviewRes.body));
-  const serialSfx = serialRouted.ctx._routes.find((route) => route.path === "/dsh-voice-alert/sfx/play");
-  const serialSfxRes = fakeRes();
-  await serialSfx.handler(fakeReq("/dsh-voice-alert/sfx/play?name=nature-bird"), serialSfxRes);
-  check("sfx play route answers after serialization", serialSfxRes.status === 200, String(serialSfxRes.body));
-  await sleep(7000); // 等这两条真播放结束，别和后续测试叠音
-}
+const serialRouted = mount({ pythonPath: "C:\\nope\\python.exe", fallbackBeep: false }, { tmpDir, webServer: true });
+const serialPreview = serialRouted.ctx._routes.find((route) => route.path === "/dsh-voice-alert/preview");
+const serialPreviewRes = fakeRes();
+await serialPreview.handler(fakeReq("/dsh-voice-alert/preview?kind=complete"), serialPreviewRes);
+check("preview route answers after serialization", serialPreviewRes.status === 200, String(serialPreviewRes.body));
+const serialSfx = serialRouted.ctx._routes.find((route) => route.path === "/dsh-voice-alert/sfx/play");
+const serialSfxRes = fakeRes();
+await serialSfx.handler(fakeReq("/dsh-voice-alert/sfx/play?name=nature-bird"), serialSfxRes);
+check("sfx play route answers after serialization", serialSfxRes.status === 200, String(serialSfxRes.body));
 
 // ------------------------------------------------- 11. 音频端点预热（v0.3.5 修复「刚生成后试听没声音」）
 
@@ -1634,8 +1621,7 @@ if (skipSound) {
   const probeLog = join(tmpDir, "player-diagnostics.log");
   const probeFile = sfxPathFor("remind-crisp", sfxCfg);
   const run = spawnSync(
-    // 不写死本机路径：统一走 resolvePython 解析出的真实解释器（跳过 WindowsApps 存根）。
-    resolvePython(sfxCfg).path,
+    "E:\\Python311\\python.exe",
     // 显式要求预热：默认是不预热的（见 11e 段），这里验证"需要时预热仍然可用"。
     [join(import.meta.dirname, "..", "lib", "play_mp3_mci.py"), "--file", probeFile, "--prewarm-ms", "350", "--log-file", probeLog],
     { encoding: "utf8", windowsHide: true, timeout: 30000 },
@@ -1716,7 +1702,7 @@ check("转换成功且产物非空", builtWav.ok === true && existsSync(builtWav
 check("二次调用命中缓存（不重复转换）", ensureWavCache(wavSource, wavCfg, { log: () => {} }).converted === false, "");
 check(
   "wav 播放器脚本语法 OK",
-  spawnSync(resolvePython(sfxCfg).path, ["-m", "py_compile", join(import.meta.dirname, "..", "lib", "play_wav_out.py")]).status === 0,
+  spawnSync("E:\\Python311\\python.exe", ["-m", "py_compile", join(import.meta.dirname, "..", "lib", "play_wav_out.py")]).status === 0,
   "",
 );
 
@@ -1726,7 +1712,7 @@ if (skipSound) {
 } else {
   const wavLog = join(tmpDir, "wav-player.log");
   const runWav = spawnSync(
-    resolvePython(sfxCfg).path,
+    "E:\\Python311\\python.exe",
     [join(import.meta.dirname, "..", "lib", "play_wav_out.py"), "--file", builtWav.file, "--prewarm-ms", "350", "--log-file", wavLog],
     { encoding: "utf8", windowsHide: true, timeout: 30000 },
   );

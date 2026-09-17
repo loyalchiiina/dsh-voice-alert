@@ -1,33 +1,11 @@
-# dsh-voice-alert 🎙
+# dsh-voice-alert
 
-**让 DSH 干完活会开口说话。**
+DSH（DeepSeek Harness）**对话语音播报插件**：一轮对话结束自动播报「完成」语音，
+出现错误 / 工具失败时播报「失败」语音。播放**绝不改动系统音量或静音状态**。
 
-**Make DSH speak up when the job is done.**
-
-DSH（DeepSeek Harness）**对话语音播报插件**：一轮对话结束自动播报「完成」语音，出现错误 / 工具失败时播报「失败」语音。播放**绝不改动系统音量或静音状态**。
-
-![语音播报设置页](docs/images/voice-alert-settings.png)
-
-> DSH 设置页「语音播报」分区：总开关、试听、音色 ID、三种提醒方式（语音播报 / 音效 / 关闭），以及「我的音色」区三条可编辑文案 + 一键生成按钮。
-> The "Voice Alert" section in DSH settings: master switch, preview, voice ID, three reminder modes, and the editable three-line script with one-click generation.
-
-**为什么值得装** — 盯着屏幕等 AI 跑完任务的时代结束了。**零配置开箱即用**：内置 20 个音效（10 个提醒音 + 10 个自然音），不填任何 Key、不需要音频文件，装上就能响。想让 AI 用**你自己的声音**，就去火山引擎「声音复刻」克隆音色，填进音色库，改三条文案（完成 / 失败 / 审批），点一下「生成语音」即可一键更新。
-
-**Why it's worth it** — Stop babysitting the screen waiting for your agent to finish. **Works out of the box** with 20 built-in sounds (10 alerts + 10 nature ambience) — no API key, no audio files. Want your own voice? Clone your timbre on Volcano Engine's Voice Cloning, paste it in, edit the three lines (done / failed / approval), and hit "Generate Voice".
-
-**三条播报** · 完成 / 失败 / 审批 —— 文案随便改，改成什么就念什么。
-
-**20 个内置音效** · 不想用语音？切成音效模式，勾选喜欢的。
-
-**绝不碰你的音量** · winmm/MCI 原样播放，不改动系统音量、不解除静音。
-
-**蓝牙没声音有救** · 内置「调一下系统音量再点试听」的唤醒提示（实测根因 = 蓝牙 A2DP 挂起吞掉第一次播放）。
-
----
-
-## 版本历史 / Changelog
-
-**v0.4.3** 关键修复：**默认不再做「静音预热」** —— 实测发现预热会在播报前多开关一次音频端点，**打断蓝牙耳机上正在播放的音乐**（v0.3.5 引入的副作用）。现在 `prewarmMs: 0`（默认不预热），需要时设回 `350` 可恢复旧行为；同时把 §5.1 的两个实战坑（**默认设备登记** / **预热副作用**）写清楚。
+**v0.4.3** 关键修复：**默认不再做「静音预热」** —— 实测发现预热会在播报前多开关一次音频端点，
+**打断蓝牙耳机上正在播放的音乐**（v0.3.5 引入的副作用）。现在 `prewarmMs: 0`（默认不预热），
+需要时设回 `350` 可恢复旧行为；同时把 §5.1 的两个实战坑（**默认设备登记** / **预热副作用**）写清楚。
 
 **v0.4.1 / v0.4.2**：waveOut 设为默认播放内核；python 解释器自动探测（跳过 WindowsApps 存根）；
 自测真实播放用例之间加等待、不再叠响。
@@ -56,7 +34,7 @@ DSH（DeepSeek Harness）**对话语音播报插件**：一轮对话结束自动
 **v0.3.6** 把「没声音怎么办」写进界面：总控卡「▶ 试听一下」正下方新增**常驻提示**（`dva-audio-tip`）——「点了试听没声音？把系统音量拖一下再点一次就有声了 —— 蓝牙耳机 / 虚拟声卡空闲挂起时，系统会把第一次播放吞掉，调音量正好把它唤醒」。
 
 **v0.3.5** 修「**刚生成语音后点试听没声音，调一下系统音量就有声音**」（用户实测报告，根因探针实测非推测）：
-* **实测证据**：MCI `open`/`play` 返回码全 0、`status position` 正常推进（229→482→733→983 ms）、`mode=playing`、系统音量 35% 非静音——音频确实在"播放"；而同一时刻 Core Audio 探针（`IMMDeviceEnumerator`）读出**默认输出设备 = 蓝牙耳机**（三个 role 一致）。蓝牙 A2DP 链路空闲后会挂起，这段时间 Windows 仍把音频"成功"送进驱动、**耳机端不出声**；**调节系统音量会立刻激活链路**——这正是"调一下音量之后就有声音"的来源。虚拟声卡端点未唤醒时同理。
+* **实测证据**：MCI `open`/`play` 返回码全 0、`status position` 正常推进（229→482→733→983 ms）、`mode=playing`、系统音量 35% 非静音——音频确实在"播放"；而同一时刻 Core Audio 探针（`IMMDeviceEnumerator`）读出**默认输出设备 = 耳机 (EDIFIER Lolli Pro 5)，即蓝牙耳机**（三个 role 一致）。蓝牙 A2DP 链路空闲后会挂起，这段时间 Windows 仍把音频"成功"送进驱动、**耳机端不出声**；**调节系统音量会立刻激活链路**——这正是"调一下音量之后就有声音"的来源。虚拟声卡端点未唤醒时同理。
 * **修复**：播放前先用 **350 ms 静音预热默认端点**（同步等待链路建立），再播真实音频；预热只播静音，**不读写任何音量 / 静音接口**（硬规则不变）。
 * **顺带修一处旧缺陷**：MCI `play` 的返回码此前被完全忽略，播放失败会被当成"播完了"（静默误报成功）。现在检查返回码，失败重试一次。
 * **诊断留痕**：播放全程写进插件日志（`--log-file`），含 `prewarm ok` / `play_rc` / `positions` —— 以后遇到无声可查 `<data>\voice-alert.log` 直接判断是"没播起来"还是"播了但端点没出声"。
