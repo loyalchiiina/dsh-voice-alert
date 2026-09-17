@@ -20,7 +20,8 @@
     "test/**",
     "cordis.patch.yml",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "docs/images/**"
   ],
   "license": "MIT",
   "keywords": [
