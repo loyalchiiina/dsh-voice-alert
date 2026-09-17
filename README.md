@@ -1,11 +1,33 @@
-# dsh-voice-alert
+# dsh-voice-alert 🎙
 
-DSH（DeepSeek Harness）**对话语音播报插件**：一轮对话结束自动播报「完成」语音，
-出现错误 / 工具失败时播报「失败」语音。播放**绝不改动系统音量或静音状态**。
+**让 DSH 干完活会开口说话。**
 
-**v0.4.3** 关键修复：**默认不再做「静音预热」** —— 实测发现预热会在播报前多开关一次音频端点，
-**打断蓝牙耳机上正在播放的音乐**（v0.3.5 引入的副作用）。现在 `prewarmMs: 0`（默认不预热），
-需要时设回 `350` 可恢复旧行为；同时把 §5.1 的两个实战坑（**默认设备登记** / **预热副作用**）写清楚。
+**Make DSH speak up when the job is done.**
+
+DSH（DeepSeek Harness）**对话语音播报插件**：一轮对话结束自动播报「完成」语音，出现错误 / 工具失败时播报「失败」语音。播放**绝不改动系统音量或静音状态**。
+
+![语音播报设置页](docs/images/voice-alert-settings.png)
+
+> DSH 设置页「语音播报」分区：总开关、试听、音色 ID、三种提醒方式（语音播报 / 音效 / 关闭），以及「我的音色」区三条可编辑文案 + 一键生成按钮。
+> The "Voice Alert" section in DSH settings: master switch, preview, voice ID, three reminder modes, and the editable three-line script with one-click generation.
+
+**为什么值得装** — 盯着屏幕等 AI 跑完任务的时代结束了。**零配置开箱即用**：内置 20 个音效（10 个提醒音 + 10 个自然音），不填任何 Key、不需要音频文件，装上就能响。想让 AI 用**你自己的声音**，就去火山引擎「声音复刻」克隆音色，填进音色库，改三条文案（完成 / 失败 / 审批），点一下「生成语音」即可一键更新。
+
+**Why it's worth it** — Stop babysitting the screen waiting for your agent to finish. **Works out of the box** with 20 built-in sounds (10 alerts + 10 nature ambience) — no API key, no audio files. Want your own voice? Clone your timbre on Volcano Engine's Voice Cloning, paste it in, edit the three lines (done / failed / approval), and hit "Generate Voice".
+
+**三条播报** · 完成 / 失败 / 审批 —— 文案随便改，改成什么就念什么。
+
+**20 个内置音效** · 不想用语音？切成音效模式，勾选喜欢的。
+
+**绝不碰你的音量** · winmm/MCI 原样播放，不改动系统音量、不解除静音。
+
+**蓝牙没声音有救** · 内置「调一下系统音量再点试听」的唤醒提示（实测根因 = 蓝牙 A2DP 挂起吞掉第一次播放）。
+
+---
+
+## 版本历史 / Changelog
+
+**v0.4.3** 关键修复：**默认不再做「静音预热」** —— 实测发现预热会在播报前多开关一次音频端点，**打断蓝牙耳机上正在播放的音乐**（v0.3.5 引入的副作用）。现在 `prewarmMs: 0`（默认不预热），需要时设回 `350` 可恢复旧行为；同时把 §5.1 的两个实战坑（**默认设备登记** / **预热副作用**）写清楚。
 
 **v0.4.1 / v0.4.2**：waveOut 设为默认播放内核；python 解释器自动探测（跳过 WindowsApps 存根）；
 自测真实播放用例之间加等待、不再叠响。
