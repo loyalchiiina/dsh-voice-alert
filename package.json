@@ -1,6 +1,6 @@
 {
   "name": "dsh-voice-alert",
-  "version": "0.4.4",
+  "version": "0.4.5",
   "description": "DSH 对话语音/音效提醒插件：每个 turn 结束自动播报「完成」，工具报错或回合失败时播「失败」，并在 DSH 设置页提供独立的「语音播报」分区。开箱即用——默认「音效」模式内置 20 个音效（提醒 10 + 大自然 10），不需要 API Key、不需要自备音频；想用自己的声音可用火山「声音复刻」克隆音色，一键生成三条播报语音（克隆/预设双路由、批量导入、试合验证）。走 winmm/waveOut 原样播放，绝不改动系统音量或静音状态。仅 Windows。| DSH voice/sound alert plugin: speaks or plays a cue at the end of every turn and plays a failure cue when a tool call or turn errors, with its own section in the DSH settings page. Works out of the box — the default effect mode ships 20 built-in sounds (10 alert chimes + 10 nature) with no API key and no audio files; an optional Volcengine voice-clone route can generate the three announcement clips in one click. Plays through winmm/waveOut as-is and never touches the system volume or mute state. Windows only.",
   "type": "module",
   "main": "lib/index.js",
@@ -20,6 +20,7 @@
     "test/**",
     "cordis.patch.yml",
     "README.md",
+    "CHANGELOG.md",
     "LICENSE"
   ],
   "license": "MIT",
