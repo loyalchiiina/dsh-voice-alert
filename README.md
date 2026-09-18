@@ -60,6 +60,57 @@ different one when something failed, plus a settings-section voice library.
 
 ---
 
+## 功能总览 · At a glance（中英对照 / Bilingual）
+
+### 播报事件 · Alert events
+
+| 中文 | English |
+|---|---|
+| 每个 turn 结束自动播报「完成」语音 | Plays a "done" voice when any conversation turn ends |
+| turn 内出现错误（`agent/error` 或工具 `isError`）播报「失败」 | Plays a "fail" voice when the turn had errors (`agent/error` or tool `isError`) |
+| 同 turn 只播一次（去重）、错误优先（不叠加完成）、错误播报节流（默认 5s） | Per-turn dedup, error-first (never stacks "done"), error throttling (5s default) |
+| 「失败」后 3s 内抑制「完成」防连声，可关闭 | Suppresses "done" for 3s after a "fail" — no back-to-back sounds; disable with 0 |
+| 用户中断（aborted）默认不播；子代理会话默认跳过，均可配置 | User aborts silent by default; subagent sessions skipped — both configurable |
+
+### 三种提醒方式 · Three alert modes
+
+| 中文 | English |
+|---|---|
+| 🗣 语音：用火山克隆音色朗读三条文案（完成/失败/审批） | 🗣 Voice: cloned-voice TTS reads your three lines (done/fail/approval) |
+| 🎵 音效：内置 20 个音效（提醒 10 + 大自然 10），零配置、无需 API Key 开箱即用 | 🎵 SFX: 20 built-in sounds (10 alerts + 10 nature), zero config, no API key needed |
+| 🔕 关闭：完成/失败/审批都不提醒 | 🔕 Off: no alerts at all |
+| 每个音效可勾选「完成/失败/审批」任一事件并单独试听 | Every SFX can be assigned to done/fail/approval (one event each) with per-row preview |
+
+### 音色库 · Voice library
+
+| 中文 | English |
+|---|---|
+| 火山克隆音色 / 预设音色双路由（`seed-icl-2.0` / `seed-tts-2.0`），自动识别类型 | Clone & preset TTS routing (`seed-icl-2.0` / `seed-tts-2.0`), type auto-detected |
+| 批量导入（多行 `ID,备注` 或 JSON）、自动去重、逐条试合验证 | Batch import (`ID,note` lines or JSON) with dedup and trial-synthesis verification |
+| 生成指纹复用：文案/音色/语速/音调/音量没变就复用既有 mp3，零 TTS 消耗 | Fingerprint reuse: unchanged text/voice/params reuse existing mp3s, zero TTS calls |
+| 默认音色库为空，音色名由使用者自填——不含任何具体人名 | Empty default voice library, names filled in by the user — no personal data shipped |
+
+### 播放与兼容 · Playback & compatibility
+
+| 中文 | English |
+|---|---|
+| 默认 waveOut/WAV 播放内核（不吞第一声、不打断蓝牙音乐），MCI 可选，失败自动回退 | waveOut/WAV player by default (no lost first sound, doesn't cut Bluetooth music), MCI optional, auto-fallback |
+| 绝不改动系统音量或静音状态（winmm 原样播放） | Never touches system volume or mute state (winmm plays as-is) |
+| 播放进程经隐藏 PowerShell → Start-Process 独立拉起，DSH 会话销毁杀不到声音 | Player spawned detached via hidden PowerShell → Start-Process, immune to session teardown |
+| 播放失败全线静默降级（缺文件→蜂鸣、异常→仅日志），绝不影响 DSH 运行 | Silent fallback everywhere (missing file → beep, exceptions → log only), never affects DSH |
+| 蓝牙耳机专项适配：默认不预热（`prewarmMs: 0`）不再打断音乐，实测文档齐全 | Bluetooth headset tuning: prewarm off by default (no music cuts), documented with measurements |
+
+### 界面与诊断 · UI & diagnostics
+
+| 中文 | English |
+|---|---|
+| DSH 原生设置页「语音播报」分区：总控卡 + 常用设置 + 高级折叠，中文优先字体 | Native DSH settings section "语音播报": master card + common settings + collapsible advanced, CJK-first typography |
+| 毫秒级阶段日志（`<data>\voice-alert.log`），任何延迟/无声可对着日志定位 | Millisecond stage logs (voice-alert.log) to pinpoint latency or silence |
+| 免凭据控制通道：写 `control.txt` 即触发真播，`status.json` 快照验收 | Credential-free control: write `control.txt` to trigger a real play, read `status.json` to verify |
+| 278/299 项自测断言（含真实播放链路），HTTP 路由仅回环 | 278/299 self-check assertions incl. real playback; HTTP routes loopback-only |
+
+---
+
 ## 1. 它做什么
 
 | 事件 | 语音 | 文件（默认优先播放增益版） |
