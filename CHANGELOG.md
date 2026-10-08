@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.4.8 - 补齐 npm 包元数据（repository / homepage）
+
+本版无功能变更，仅修正包元数据——它直接决定插件市场能否采集到本插件的下载量。
+
+- **补 `repository` 字段**：此前 `package.json` 缺 `repository`，导致上游
+  awesome-dsh-plugin 的 `scripts/probe-npm.mjs` 在「npm 包是否属于该仓库」这一步
+  判定失败（该脚本读取 registry 里 `latest` 版本的 `repository`，要求包含对应
+  GitHub 仓库路径），于是 `data/npm-map.json` 不收录本条目、`downloads` 在
+  `plugins.json` 里落成 `null`。
+- **症状**：插件市场列表与详情页**不显示下载量数字**（看起来像"一个下载都没有"），
+  实际 npm 近30天有 800+ 次下载；同时收录条目会降级为 `github:` 安装方式、
+  不展示 npm 版本号。
+- **补 `homepage` 字段**：指向仓库 README，用于 npm 页面与市场条目的主页链接。
+
 ## 0.4.7 - 官方 DSH 兼容声明与引擎版本口径修正
 
 依照 DeepSeek Harness **官方规范**（`packages/boot/app-boot/README.md`）修正兼容性声明。

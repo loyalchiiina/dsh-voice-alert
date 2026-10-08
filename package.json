@@ -1,63 +1,68 @@
 {
-    "name":  "dsh-voice-alert",
-    "version":  "0.4.7",
-    "description":  "让 DSH 干完活会开口说话：回合结束自动播报「完成/失败/审批」，零配置内置 20 个音效，也可克隆自己的音色。| Make DSH speak when the job is done: auto voice alerts for done/failed/approval, 20 built-in sounds, or clone your own voice.",
-    "type":  "module",
-    "main":  "lib/index.js",
-    "sideEffects":  false,
-    "engines":  {
-                    "node":  "\u003e=18",
-                    "dsh":  "\u003e=0.1.7-rc.1"
-                },
-    "exports":  {
-                    ".":  "./lib/index.js",
-                    "./client":  "./lib/client.js",
-                    "./package.json":  "./package.json"
-                },
-    "files":  [
-                  "lib/**/*.js",
-                  "lib/**/*.py",
-                  "sfx/*.mp3",
-                  "test/**",
-                  "cordis.patch.yml",
-                  "README.md",
-                  "CHANGELOG.md",
-                  "LICENSE"
-              ],
-    "license":  "MIT",
-    "keywords":  [
-                     "dsh-plugin",
-                     "deepseek-harness",
-                     "voice",
-                     "alert",
-                     "notify",
-                     "tts",
-                     "settings",
-                     "语音提醒",
-                     "音效提醒",
-                     "声音克隆"
-                 ],
-    "dsh":  {
-                "bundle":  {
-                               "patch":  "./cordis.patch.yml"
-                           },
-                "client":  {
-                               "inject":  [
-                                              "@deepseek-ai/dsh-client-connection",
-                                              "@deepseek-ai/dsh-client-runtime",
-                                              "@deepseek-ai/dsh-client-ui-settings",
-                                              "@deepseek-ai/dsh-client-ui-slots",
-                                              "@deepseek-ai/dsh-client-locale"
-                                          ],
-                               "platform":  "web"
-                           }
-            },
-    "peerDependencies":  {
-                             "@deepseek-ai/cordis":  "^4.0.2",
-                             "@deepseek-ai/dsh":  "\u003e=0.1.7-rc.1"
-                         },
-    "devDependencies":  {
-                            "@deepseek-ai/cordis":  "^4.0.2",
-                            "@deepseek-ai/dsh":  "\u003e=0.1.7-rc.1"
-                        }
+  "name": "dsh-voice-alert",
+  "version": "0.4.8",
+  "description": "让 DSH 干完活会开口说话：回合结束自动播报「完成/失败/审批」，零配置内置 20 个音效，也可克隆自己的音色。| Make DSH speak when the job is done: auto voice alerts for done/failed/approval, 20 built-in sounds, or clone your own voice.",
+  "type": "module",
+  "main": "lib/index.js",
+  "sideEffects": false,
+  "engines": {
+    "node": ">=18",
+    "dsh": ">=0.1.7-rc.1"
+  },
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib/**/*.js",
+    "lib/**/*.py",
+    "sfx/*.mp3",
+    "test/**",
+    "cordis.patch.yml",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "license": "MIT",
+  "keywords": [
+    "dsh-plugin",
+    "deepseek-harness",
+    "voice",
+    "alert",
+    "notify",
+    "tts",
+    "settings",
+    "语音提醒",
+    "音效提醒",
+    "声音克隆"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-connection",
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-ui-settings",
+        "@deepseek-ai/dsh-client-ui-slots",
+        "@deepseek-ai/dsh-client-locale"
+      ],
+      "platform": "web"
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.2",
+    "@deepseek-ai/dsh": ">=0.1.7-rc.1"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "^4.0.2",
+    "@deepseek-ai/dsh": ">=0.1.7-rc.1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/loyalchiiina/dsh-voice-alert.git"
+  },
+  "homepage": "https://github.com/loyalchiiina/dsh-voice-alert#readme"
 }
