@@ -630,6 +630,10 @@ check("playback copy can be disabled by config", preparePlaybackFile("complete",
 section("2o. generation: temp name + retry + change detection");
 check("gain writes a temp name first", tempGainPath("out.mp3", 123) === "out.mp3.tmp-123.mp3", tempGainPath("out.mp3", 123));
 const retryCalls = [];
+// 注意：这里的路径必须是绝对路径（放 tmpDir 下）。用相对名 "from.mp3"/"to.mp3" 会让夹具
+// 把文件写到**当前工作目录**（用户跑自检时就是仓库根目录），留下一个 7 字节的 to.mp3 垃圾文件。
+const fromFixture = join(tmpDir, "rename-from.mp3");
+const toFixture = join(tmpDir, "rename-to.mp3");
 const flakyFs = {
   renameSync(from, to) {
     retryCalls.push(from);
@@ -641,7 +645,7 @@ const flakyFs = {
     writeFileSync(to, "renamed", "utf8");
   },
 };
-const retried = await renameWithRetry("from.mp3", "to.mp3", { retries: 5, delayMs: 1, fsOps: flakyFs });
+const retried = await renameWithRetry(fromFixture, toFixture, { retries: 5, delayMs: 1, fsOps: flakyFs });
 check("rename retries through EPERM and succeeds", retried.ok === true && retried.attempts === 3, JSON.stringify(retried));
 
 const lockTarget = join(playDir, "locked.mp3");
@@ -765,7 +769,7 @@ globalThis.fetch = function (url, init) {
       speaker: "S_TESTCLONE001",
       voiceNote: "备注X",
       apiKeyPresent: true,
-      apiKeyMask: "79c7597c…",
+      apiKeyMask: "TESTKEY0…",
       persisted: { ok: true, skipped: false },
       applied: { texts: {}, prosody: {}, tts: { apiKey: "X" }, voiceNote: "备注X" },
     });
@@ -776,9 +780,9 @@ globalThis.fetch = function (url, init) {
       texts: { complete: "完成文案", fail: "失败文案", approval: "审批文案" },
       prosody: { speed_ratio: 1.05, pitch_ratio: 1.04, volume_ratio: 1 },
       speaker: "S_TESTCLONE001",
-      voiceNote: "测试音色 · 读诗腔",
+      voiceNote: "测试音色 · 示例备注",
       apiKeyPresent: true,
-      apiKeyMask: "79c7597c…",
+      apiKeyMask: "TESTKEY0…",
       keyStorageNote: "KEY-NOTE",
       voicePolicyNote: "VOICE-POLICY",
       systemVolume: { ok: true, volumePercent: 54, muted: false, source: "audio_state.py (read-only)" },
@@ -862,11 +866,11 @@ await sleep(50);
 check(
   "loadSettings filled the inputs from the host payload",
   domNodes.get("dva-text-complete").value === "完成文案" &&
-    domNodes.get("dva-voice-note").value === "测试音色 · 读诗腔" &&
+    domNodes.get("dva-voice-note").value === "测试音色 · 示例备注" &&
     domNodes.get("dva-speed_ratio").value === "1.05",
   JSON.stringify({ complete: domNodes.get("dva-text-complete").value, note: domNodes.get("dva-voice-note").value, speed: domNodes.get("dva-speed_ratio").value }),
 );
-check("key state shows a mask, not the key", domNodes.get("dva-key-state").textContent.indexOf("79c7597c…") >= 0, domNodes.get("dva-key-state").textContent);
+check("key state shows a mask, not the key", domNodes.get("dva-key-state").textContent.indexOf("TESTKEY0…") >= 0, domNodes.get("dva-key-state").textContent);
 check("local-only key note rendered from the host payload", domNodes.get("dva-key-note").textContent === "KEY-NOTE", domNodes.get("dva-key-note").textContent);
 check("system volume is displayed read-only", domNodes.get("dva-volume").textContent.indexOf("54%") >= 0, domNodes.get("dva-volume").textContent);
 check("generate is enabled once the key is known present", domNodes.get("dva-generate").disabled === false, String(domNodes.get("dva-generate").disabled));
@@ -875,7 +879,7 @@ domNodes.get("dva-tts-key").value = "NEWKEY-42";
 const postedBefore = clientFetchCalls.length;
 await clientExports.__dvaTest.saveSettings();
 const posted = JSON.parse(clientFetchCalls[clientFetchCalls.length - 1].init.body);
-check("save posts texts + prosody + voiceNote + the new key", Boolean(posted.tts) && posted.tts.apiKey === "NEWKEY-42" && posted.voiceNote === "测试音色 · 读诗腔", JSON.stringify(posted));
+check("save posts texts + prosody + voiceNote + the new key", Boolean(posted.tts) && posted.tts.apiKey === "NEWKEY-42" && posted.voiceNote === "测试音色 · 示例备注", JSON.stringify(posted));
 check("save acknowledged into config.json", domNodes.get("dva-status").textContent.indexOf("已写入 config.json") >= 0, domNodes.get("dva-status").textContent);
 check("the key box is cleared after saving", domNodes.get("dva-tts-key").value === "", domNodes.get("dva-tts-key").value);
 
@@ -1433,7 +1437,7 @@ check(
   "",
 );
 check("sfx panel is hidden while the mode is voice", String(domNodes.get("dva-sfx-panel").style.display) === "none", String(domNodes.get("dva-sfx-panel").style.display));
-check("the voice mode button carries the active style", String(domNodes.get("dva-alert-mode-voice").style.background).indexOf("31,111,235") >= 0 || String(domNodes.get("dva-alert-mode-voice").style.background) === "#1f6feb", String(domNodes.get("dva-alert-mode-voice").style.background));
+check("the voice mode button carries the active style", String(domNodes.get("dva-alert-mode-voice").style.background).indexOf("--dsw-alias-brand-primary") >= 0, String(domNodes.get("dva-alert-mode-voice").style.background));
 
 // ------------------------------------------------- 10. v0.3.4（用户 2026-09-16 反馈）
 
@@ -1553,15 +1557,24 @@ check(
 globalThis.fetch = realFetch;
 
 section("10e. 试听串行化：路由在设备占用判定下仍正常作答");
-const serialRouted = mount({ pythonPath: "C:\\nope\\python.exe", fallbackBeep: false }, { tmpDir, webServer: true });
-const serialPreview = serialRouted.ctx._routes.find((route) => route.path === "/dsh-voice-alert/preview");
-const serialPreviewRes = fakeRes();
-await serialPreview.handler(fakeReq("/dsh-voice-alert/preview?kind=complete"), serialPreviewRes);
-check("preview route answers after serialization", serialPreviewRes.status === 200, String(serialPreviewRes.body));
-const serialSfx = serialRouted.ctx._routes.find((route) => route.path === "/dsh-voice-alert/sfx/play");
-const serialSfxRes = fakeRes();
-await serialSfx.handler(fakeReq("/dsh-voice-alert/sfx/play?name=nature-bird"), serialSfxRes);
-check("sfx play route answers after serialization", serialSfxRes.status === 200, String(serialSfxRes.body));
+// 这一段会命中真实的 /preview 与 /sfx/play 路由，而路由内部走的是**真实 playSfx**
+// （不是 mount 的 deps.play stub），所以它会真的出声：preview 播完整语音、sfx/play 播音效。
+// 因此整段必须放在 skipSound 守卫内 —— 否则 `--no-sound` 名不副实，跑一次自检就会在
+// 用户机器上放出语音和音效（2026-09-17 实测：跑自检时用户听到鸟叫 natures-bird 6.44s）。
+if (skipSound) {
+  console.log("  SKIP  (--no-sound：这一段会真播放 preview 语音与 sfx 音效)");
+} else {
+  const serialRouted = mount({ pythonPath: "C:\\nope\\python.exe", fallbackBeep: false }, { tmpDir, webServer: true });
+  const serialPreview = serialRouted.ctx._routes.find((route) => route.path === "/dsh-voice-alert/preview");
+  const serialPreviewRes = fakeRes();
+  await serialPreview.handler(fakeReq("/dsh-voice-alert/preview?kind=complete"), serialPreviewRes);
+  check("preview route answers after serialization", serialPreviewRes.status === 200, String(serialPreviewRes.body));
+  const serialSfx = serialRouted.ctx._routes.find((route) => route.path === "/dsh-voice-alert/sfx/play");
+  const serialSfxRes = fakeRes();
+  await serialSfx.handler(fakeReq("/dsh-voice-alert/sfx/play?name=nature-bird"), serialSfxRes);
+  check("sfx play route answers after serialization", serialSfxRes.status === 200, String(serialSfxRes.body));
+  await sleep(7000); // 等这两条真播放结束，别和后续测试叠音
+}
 
 // ------------------------------------------------- 11. 音频端点预热（v0.3.5 修复「刚生成后试听没声音」）
 
@@ -1621,7 +1634,8 @@ if (skipSound) {
   const probeLog = join(tmpDir, "player-diagnostics.log");
   const probeFile = sfxPathFor("remind-crisp", sfxCfg);
   const run = spawnSync(
-    "E:\\Python311\\python.exe",
+    // 不写死本机路径：统一走 resolvePython 解析出的真实解释器（跳过 WindowsApps 存根）。
+    resolvePython(sfxCfg).path,
     // 显式要求预热：默认是不预热的（见 11e 段），这里验证"需要时预热仍然可用"。
     [join(import.meta.dirname, "..", "lib", "play_mp3_mci.py"), "--file", probeFile, "--prewarm-ms", "350", "--log-file", probeLog],
     { encoding: "utf8", windowsHide: true, timeout: 30000 },
@@ -1702,7 +1716,7 @@ check("转换成功且产物非空", builtWav.ok === true && existsSync(builtWav
 check("二次调用命中缓存（不重复转换）", ensureWavCache(wavSource, wavCfg, { log: () => {} }).converted === false, "");
 check(
   "wav 播放器脚本语法 OK",
-  spawnSync("E:\\Python311\\python.exe", ["-m", "py_compile", join(import.meta.dirname, "..", "lib", "play_wav_out.py")]).status === 0,
+  spawnSync(resolvePython(sfxCfg).path, ["-m", "py_compile", join(import.meta.dirname, "..", "lib", "play_wav_out.py")]).status === 0,
   "",
 );
 
@@ -1712,7 +1726,7 @@ if (skipSound) {
 } else {
   const wavLog = join(tmpDir, "wav-player.log");
   const runWav = spawnSync(
-    "E:\\Python311\\python.exe",
+    resolvePython(sfxCfg).path,
     [join(import.meta.dirname, "..", "lib", "play_wav_out.py"), "--file", builtWav.file, "--prewarm-ms", "350", "--log-file", wavLog],
     { encoding: "utf8", windowsHide: true, timeout: 30000 },
   );
@@ -1745,6 +1759,156 @@ if (existsSync(resolvedPy.path) && resolvedPy.source !== "fallback") {
 } else {
   console.log("  SKIP  显式配置优先（本机没解析到可用 python）");
 }
+
+// ------------------------------------------ 14. 主题自适应（浅色背景可读性）
+
+section("14. 主题自适应：配色走宿主设计令牌，浅色背景不再白字白底");
+// 真实 bug（2026-10-10 用户反馈）：v0.3.2~v0.4.8 的界面把 1 深色主题的颜色
+// **写死**在源码里 —— 正文 rgba(255,255,255,.xx) 白字、标题 #e6edf3、
+// 次要文字 #8b93a8、容器底 rgba(255,255,255,.xx) 半透明白 + rgba(0,0,0,.28) 深底。
+// 深色背景下正常；**浅色背景下白字落在白底上 = 完全看不见**。
+// 修法：改用宿主的 --dsw-alias-* 设计令牌（主题服务在浅/深两套调色板上重绑，
+// 深色经 body[data-ds-dark-theme] 切换），令牌随主题自动反转。
+//
+// 本节把这次踩过的坑固化成回归断言，防止以后有人再写死深色专用色。
+const DARK_ONLY_COLORS = [
+  "#e6edf3", // GitHub 深色主题的正文白
+  "#8b93a8", // 深色主题的次要文字灰
+  "#c9d1d9", // 深色主题的字面量灰
+  "#5b6472", // 深色主题的弱化灰
+  "#7ee787", // 深色主题的成功绿
+  "#f85149", // 深色主题的危险红
+  "#58a6ff", // 深色主题的链接蓝
+  "#e3b341", // 深色主题的警告黄
+  "#c9a86a", // 深色主题的徽标金
+  "#6aa8c9", // 深色主题的徽标蓝
+  "#0b0e14", // 深色主题的徽标前景深色
+];
+// 只扫非注释行，避免把解释性注释当成违规。
+const clientCodeLines = clientSource
+  .split(/\r?\n/u)
+  .filter((line) => !/^\s*\/\//u.test(line));
+const codeText = clientCodeLines.join("\n");
+for (const bad of DARK_ONLY_COLORS) {
+  check(
+    "代码里不再写死深色主题专用色 " + bad,
+    codeText.toLowerCase().indexOf(bad) < 0,
+    codeText.toLowerCase().indexOf(bad) >= 0 ? "found in code" : "",
+  );
+}
+// 白字 / 黑底的写死写法：深色装置色，浅色背景下会直接看不见。
+check(
+  "不再写死白字 rgba(255,255,255,…)",
+  !/rgba\(255,\s*255,\s*255/u.test(codeText),
+  /rgba\(255,\s*255,\s*255/u.test(codeText) ? "found rgba(255,255,255)" : "",
+);
+check(
+  "不再写死深色底 rgba(0,0,0,…)",
+  !/rgba\(0,\s*0,\s*0/u.test(codeText),
+  /rgba\(0,\s*0,\s*0/u.test(codeText) ? "found rgba(0,0,0)" : "",
+);
+// 正面断言：确实引用了宿主的主题令牌（否则上面可能只是"把颜色全删了"）。
+check(
+  "引用了宿主主题令牌 --dsw-alias-*（配色随主题反转）",
+  (codeText.match(/--dsw-alias-/gu) || []).length >= 10,
+  String((codeText.match(/--dsw-alias-/gu) || []).length),
+);
+// 令牌都带 var() 兜底值：万一宿主令牌缺失，也要退回可读的灰阶，而不是白底白字。
+const tokenBlockMatch = codeText.match(/var TOKEN = \{([\s\S]*?)\n {4}\};/u);
+check("TOKEN 配色表存在", Boolean(tokenBlockMatch), tokenBlockMatch ? "" : "TOKEN table not found");
+if (tokenBlockMatch) {
+  const tokenBody = tokenBlockMatch[1];
+  const decls = tokenBody.split("\n").filter((line) => /var\(/u.test(line));
+  const withFallback = decls.filter((line) => /var\([^)]*,\s*[^)]+\)/u.test(line));
+  check(
+    "TOKEN 每项都带 var() 兜底色（宿主令牌缺失时仍可读）",
+    decls.length > 0 && withFallback.length === decls.length,
+    "decls=" + decls.length + " withFallback=" + withFallback.length,
+  );
+}
+// 渲染出来的节点必须真的用上令牌（不能只在表里定义、DOM 里还是旧色）。
+const themedNodes = [
+  ["dva-status", domNodes.get("dva-status")],
+  ["dva-voice", domNodes.get("dva-voice")],
+  ["dva-audio-tip", domNodes.get("dva-audio-tip")],
+  ["dva-clone-link", domNodes.get("dva-clone-link")],
+];
+for (const [id, node] of themedNodes) {
+  check(
+    "DOM 节点 " + id + " 的颜色走的是主题令牌",
+    Boolean(node) && String(node.style.color).indexOf("--dsw-alias-") >= 0,
+    node ? String(node.style.color) : "missing node",
+  );
+}
+check(
+  "主按钮底色走的是主题令牌",
+  String(domNodes.get("dva-generate").style.background).indexOf("--dsw-alias-brand-primary") >= 0,
+  String(domNodes.get("dva-generate").style.background),
+);
+check(
+  "输入框底色走的是主题令牌",
+  String(domNodes.get("dva-text-complete").style.background).indexOf("--dsw-alias-") >= 0,
+  String(domNodes.get("dva-text-complete").style.background),
+);
+
+// ------------------------------------------ 15. 窄面板不横向溢出（用户反馈 2026-10-10）
+
+section("15. 布局：窄面板下不横向溢出卡片");
+// 真实 bug（用户截图反馈）：语速/音调/音量 那一行的第三个输入框**跑到卡片外面**。
+// 根因是这一行的 flex 项都带 min-width（标签 60px + 输入框 88px），
+// 最小宽度 = 3*60 + 3*88 + 5*10 = 494px；设置面板比这窄时，因为 min-width
+// 锁死了收缩，整行就溢出卡片右边缘。
+// 修法：整行允许 flexWrap + 收窄 min-width + 输入框 box-sizing。
+//
+// 本节把这条坑固化成回归断言，防止以后有人再把 min-width 写死成大值。
+const LAYOUT_SOURCE = clientSource;
+// 15a. 所有"行"必须允许换行（除少数刻意不换行的），否则窄面板必溢出。
+const wrapCount = (LAYOUT_SOURCE.match(/flexWrap: "wrap"/gu) || []).length;
+check("存在可换行的行样式（flexWrap: wrap）", wrapCount >= 5, "count=" + wrapCount);
+
+// 15b. 不得再出现把宽度锁死的 min-width 大值（>= 100px 视为锁死）。
+//     允许：0 / em 相对单位 / 小于 100px 的控件最小宽度。
+const hardMinWidths = [...LAYOUT_SOURCE.matchAll(/minWidth:\s*"(\d+)px"/gu)].map((m) => Number(m[1]));
+const locked = hardMinWidths.filter((v) => v >= 100);
+check(
+  "不再有把宽度锁死的 minWidth >= 100px",
+  locked.length === 0,
+  "found=" + JSON.stringify(locked) + " all=" + JSON.stringify(hardMinWidths),
+);
+
+// 15c. prosody 行（语速/音调/音量）三只输入框必须都是可收缩的。
+for (const id of ["dva-speed_ratio", "dva-pitch_ratio", "dva-volume_ratio"]) {
+  const node = domNodes.get(id);
+  const flex = node ? String(node.style.flex) : "";
+  // flex: "0 1 84px" 收缩因子为 1 -> 可缩；若为 "0 0 88px" 则收缩因子 0 -> 锁死溢出
+  const parts = flex.trim().split(/\s+/u);
+  const shrink = parts.length >= 2 ? parts[1] : "1";
+  check(
+    "数字框 " + id + " 可收缩（flex-shrink != 0）",
+    Boolean(node) && shrink !== "0",
+    "flex=" + flex,
+  );
+  check(
+    "数字框 " + id + " 用 border-box（内边距不撑破容器）",
+    Boolean(node) && String(node.style.boxSizing) === "border-box",
+    node ? String(node.style.boxSizing) : "missing",
+  );
+}
+
+// 15d. 主文本输入框也必须可收缩（原来 minWidth:200px 同样是锁死）。
+const textNode = domNodes.get("dva-text-complete");
+check(
+  "文本输入框可收缩且 minWidth 归零",
+  Boolean(textNode) && String(textNode.style.minWidth) === "0",
+  textNode ? "minWidth=" + textNode.style.minWidth + " flex=" + textNode.style.flex : "missing",
+);
+
+// 15e. 卡片与根容器都带 minWidth:0（父级 flex 不按内容最小宽度撑开）。
+check(
+  "卡片容器带 minWidth:0（可被压缩）",
+  /cardStyle = \{[\s\S]*?minWidth:\s*"0"/u.test(LAYOUT_SOURCE),
+  "",
+);
 
 // ---------------------------------------------------------------- summary
 
