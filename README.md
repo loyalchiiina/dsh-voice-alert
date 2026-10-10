@@ -107,7 +107,8 @@ different one when something failed, plus a settings-section voice library.
 | DSH 原生设置页「语音播报」分区：总控卡 + 常用设置 + 高级折叠，中文优先字体 | Native DSH settings section "语音播报": master card + common settings + collapsible advanced, CJK-first typography |
 | 毫秒级阶段日志（`<data>\voice-alert.log`），任何延迟/无声可对着日志定位 | Millisecond stage logs (voice-alert.log) to pinpoint latency or silence |
 | 免凭据控制通道：写 `control.txt` 即触发真播，`status.json` 快照验收 | Credential-free control: write `control.txt` to trigger a real play, read `status.json` to verify |
-| 278/299 项自测断言（含真实播放链路），HTTP 路由仅回环 | 278/299 self-check assertions incl. real playback; HTTP routes loopback-only |
+| **配色跟随宿主主题**：浅色/深色背景下都清晰（走 `--dsw-alias-*` 设计令牌，不写死色值） | **Theme-aware colors**: legible on both light and dark backgrounds (host design tokens, no hard-coded colors) |
+| 302 项自测断言（含真实播放链路与浅/深主题回归），HTTP 路由仅回环 | 302 self-check assertions incl. real playback and light/dark theme regression; HTTP routes loopback-only |
 
 ---
 
