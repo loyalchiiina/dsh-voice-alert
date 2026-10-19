@@ -1,9 +1,12 @@
-# dsh-voice-alert - host-only bundle row.
+# dsh-voice-alert - host + web-client bundle row.
 #
-# The plugin lives on the host half only: it listens to `session/event`
-# (turn/start, turn/end), `agent/error` and `tools/result` and plays a fixed
-# MP3 through a detached powershell Start-Process chain. There is no client
-# bundle, no UI, nothing mounted into the browser.
+# Two halves:
+#   host   - listens to `session/event` (turn/start, turn/end), `agent/error`
+#            and `tools/result`, then plays a fixed MP3 through a detached
+#            powershell Start-Process chain.
+#   client - `lib/client.js` (a `__ModuleLoader__` bundle, `dsh.client` in
+#            package.json, platform `web`) renders the plugin's
+#            `settings.section` card into the DSH settings page.
 #
 # All tunables have defaults, so this row carries no `config` on purpose. To
 # override one of them without touching

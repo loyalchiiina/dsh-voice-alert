@@ -8,7 +8,8 @@ DSH（DeepSeek Harness）**对话语音播报插件**：一轮对话结束自动
 > 设置页实拍（DSH 原生设置分区「语音播报」）：总控卡 → 我的音色 · 语音合成 → 高级设置折叠。
 > 配色跟随宿主主题（浅色 / 深色都清晰），窄面板下控件自动换行不溢出。
 
-**让 DSH 干完活会开口说话** —— 装完即用，零配置：内置 **20 个音效**、三条播报文案，
+**让 DSH 干完活会开口说话** —— 装完即用，零配置：内置 **20 个音效**、三条播报文案（完成 / 失败 / 审批，
+其中审批只能手动触发），
 想用自己的声音再按 §4.1 一键克隆。**支持三种提醒方式**：🗣 语音播报 / 🎵 音效 / 🔕 关闭。
 
 **v0.4.10 / v0.4.9** 界面两处修复：
@@ -19,7 +20,7 @@ DSH（DeepSeek Harness）**对话语音播报插件**：一轮对话结束自动
 * **v0.4.10 窄面板不溢出**：语速 / 音调 / 音量 一行的控件宽度被 `min-width` 锁死
   （最小 494px），面板比这窄时**第三个输入框溢出卡片右边缘**。现改为可换行 +
   解除宽度锁 + 容器可压缩。
-* 新增 32 条回归断言（主题 22 + 布局 10），自检 **312 项全过**。
+* 新增 32 条回归断言（主题 22 + 布局 10），自检 **312 项全过**（`--no-sound`；完整模式 335 项）。
 
 **v0.4.3** 关键修复：**默认不再做「静音预热」** —— 实测发现预热会在播报前多开关一次音频端点，
 **打断蓝牙耳机上正在播放的音乐**（v0.3.5 引入的副作用）。现在 `prewarmMs: 0`（默认不预热），
@@ -94,10 +95,16 @@ different one when something failed, plus a settings-section voice library.
 
 | 中文 | English |
 |---|---|
-| 🗣 语音：用火山克隆音色朗读三条文案（完成/失败/审批） | 🗣 Voice: cloned-voice TTS reads your three lines (done/fail/approval) |
+| 🗣 语音：用火山克隆音色朗读文案（自动播报只有**完成 / 失败**两种，详见下方说明） | 🗣 Voice: cloned-voice TTS reads your lines (only **done / fail** fire automatically — see note below) |
 | 🎵 音效：内置 20 个音效（提醒 10 + 大自然 10），零配置、无需 API Key 开箱即用 | 🎵 SFX: 20 built-in sounds (10 alerts + 10 nature), zero config, no API key needed |
 | 🔕 关闭：完成/失败/审批都不提醒 | 🔕 Off: no alerts at all |
 | 每个音效可勾选「完成/失败/审批」任一事件并单独试听 | Every SFX can be assigned to done/fail/approval (one event each) with per-row preview |
+
+> **⚠️ 关于「审批」事件**：插件只监听了三个 DSH 事件 —— `session/event`（turn 结束 → 完成）、
+> `agent/error`（→ 失败）、`tools/result`。**审批没有自动触发源**，`engine.js` 里也没有任何
+> 权限/审批事件监听。`approval` 只能手动触发：`GET /dsh-voice-alert/play?kind=approval`、
+> `GET /dsh-voice-alert/preview?kind=approval`，或在控制文件里写 `kind=approval`。
+> 换成一句话：**自动播报 = 完成 / 失败；审批是手动播放的第三个音效槽位**。
 
 ### 音色库 · Voice library
 
@@ -126,7 +133,7 @@ different one when something failed, plus a settings-section voice library.
 | 毫秒级阶段日志（`<data>\voice-alert.log`），任何延迟/无声可对着日志定位 | Millisecond stage logs (voice-alert.log) to pinpoint latency or silence |
 | 免凭据控制通道：写 `control.txt` 即触发真播，`status.json` 快照验收 | Credential-free control: write `control.txt` to trigger a real play, read `status.json` to verify |
 | **配色跟随宿主主题**：浅色/深色背景下都清晰（走 `--dsw-alias-*` 设计令牌，不写死色值） | **Theme-aware colors**: legible on both light and dark backgrounds (host design tokens, no hard-coded colors) |
-| 302 项自测断言（含真实播放链路与浅/深主题回归），HTTP 路由仅回环 | 302 self-check assertions incl. real playback and light/dark theme regression; HTTP routes loopback-only |
+| 312 项自测断言（`--no-sound`；完整模式 335 项，含真实播放链路与浅/深主题回归），HTTP 路由仅回环 | 312 self-check assertions (`--no-sound`; 335 in full mode incl. real playback and light/dark theme regression); HTTP routes loopback-only |
 
 ---
 
@@ -137,7 +144,10 @@ different one when something failed, plus a settings-section voice library.
 | 任意一个 **turn 结束** | 完成 | `voice-alert-complete-poetic-loud.mp3` |
 | 该 turn 内出现过错误（`agent/error` 或工具 `isError`） | 失败 | `voice-alert-fail-poetic-loud.mp3` |
 | 立即错误播报（工具失败/agent 报错当下，节流 5s） | 失败 | 同上 |
-| 手动验证（HTTP 路由） | 完成/失败/审批 | `voice-alert-approval-poetic-loud.mp3` |
+| 手动验证（HTTP 路由）**仅手动** | 完成/失败/审批 | `voice-alert-approval-poetic-loud.mp3` |
+
+> **自动播报只有「完成 / 失败」两种。** 上表最后一行是手动触发的验证入口（`/play?kind=approval`），
+> 不是自动事件 —— 插件没有监听任何权限/审批类 DSH 事件。详见 §3 末尾的说明。
 
 音频**永不改动系统音量与静音状态**：播放器用 winmm/MCI「原样播放」（系统多大就多大，系统静音就无声），
 不读写任何音频控制接口。响度问题通过**音频文件本身**解决（见 §4）。
@@ -188,7 +198,7 @@ different one when something failed, plus a settings-section voice library.
 | voice-alert-fail-poetic.mp3 | −20.9 dB | −5.1 dB | −8.7 dB | −0.5 dB | +12.2 dB |
 | voice-alert-approval-poetic.mp3 | −19.9 dB | −5.3 dB | −8.8 dB | 0.0 dB | +11.1 dB |
 
-* 处理链：`volume=+26dB,alimiter=limit=0.98:level=disabled`（限幅器把峰值压在 0.98≈−0.17 dBFS 之下，不削波）。
+* 处理链：`volume=+26dB,alimiter=limit=0.95:level=disabled`（限幅器把峰值压在 0.95≈−0.45 dBFS 之下，不削波）。
 * 生成方式：本地 ffmpeg 一键增益（该脚本是本机开发脚本，含本机绝对路径，**不随开源包发布**），输出到 `<home>\.dsh\data\dsh-voice-alert\audio\voice-alert-<kind>-poetic-loud.mp3`。
 * **原始 MP3 一律不改动**，插件播放优先级：**增益版 → 原始版 → 蜂鸣降级**。
 * 增益版与原始版都用插件自带的 `lib/play_mp3_mci.py` 播放（`--file`，winmm/MCI「原样播放」机制）。
@@ -231,7 +241,7 @@ different one when something failed, plus a settings-section voice library.
 | 提醒（10） | 叮咚 / 电话铃 / 消息提示 / 闹钟 / 滴滴 / 清脆叮 / 钟声 / 成功号角 / 欢快音 / 木鱼 |
 | 大自然（10） | 鸟鸣 / 蝉鸣 / 蛙鸣 / 雨声 / 海浪 / 溪流 / 风声 / 篝火 / 雷鸣 / 森林 |
 
-* **默认分配**：完成 → 成功号角，失败 → 木鱼，审批 → 叮咚（`sfxByKind`，可逐个更换）。
+* **默认分配**：完成 → 成功号角，失败 → 木鱼，审批 → 叮咚（`sfxByKind`，可逐个更换）。审批槽位只在手动触发时用到（`/play?kind=approval` 或控制文件），不会自动响。
 * **选择方式**（v0.3.4）：每个音效一行，行内三个勾选框（完成/失败/审批，**同一事件只能勾一个**）+ 音效名 + 「▶ 试听」；列表由 React 直接渲染（不再用 DOM 追加 option，那会被重渲染清空）。
 * **试听**：「▶ 试听」走 `GET /sfx/play?name=<key>`，**不经过引擎**，绝不会影响完成/失败的判定；v0.3.4 起试听会**排队**（等上一个播完），连点不再出现"没声音"。
 * **完整性**：`GET /sfx/list` 返回目录 + 每个文件是否在库（`present`），设置页显示「共 20 个内置音效，已在库 N 个」。
@@ -242,9 +252,9 @@ different one when something failed, plus a settings-section voice library.
 
 | `alertMode` | 行为 | 需要 API Key |
 |---|---|---|
-| `voice`（默认） | 用你的克隆音色朗读三条文案（原行为） | 需要 |
-| `sfx` | 播内置音效，**完全不调用 TTS** | 不需要 |
-| `off` | 完成 / 失败 / 审批都不提醒 | 不需要 |
+| `sfx`（默认） | 播内置音效，**完全不调用 TTS**，装完即用 | 不需要 |
+| `voice` | 用你的克隆音色朗读三条文案（需自行配置火山 Key 并生成语音） | 需要 |
+| `off` | 完成 / 失败都不提醒（审批本来就不会自动播放） | 不需要 |
 
 > `enabled`（总开关）优先级最高：关掉后三种模式一律静音（引擎层拦截，UI 保存立即生效）。
 
@@ -258,7 +268,7 @@ different one when something failed, plus a settings-section voice library.
 | 键 | 默认 | 说明 |
 |---|---|---|
 | `enabled` | `true` | 总开关（关掉 = 语音和音效都静音） |
-| `alertMode` | `"voice"` | 提醒方式：`voice` 语音 / `sfx` 音效 / `off` 关闭（v0.3.3） |
+| `alertMode` | `"sfx"` | 提醒方式：`sfx` 音效（默认，装完即用）/ `voice` 语音（需配 Key）/ `off` 关闭（v0.3.3） |
 | `sfxByKind` | 成功号角 / 木鱼 / 叮咚 | 音效模式下三类事件各播哪个音效（v0.3.3，key 必须是内置目录里的） |
 | `sfxDir` | `<data>\sfx` | 内置音效目录（v0.3.3） |
 | `playOnTurnEnd` | `true` | 每个 turn 结束播一次 |
@@ -280,7 +290,7 @@ different one when something failed, plus a settings-section voice library.
 | `selectedVoiceId` | `""` | 当前选中音色（生成缺省用它；为空时需先在音色库点「设为当前」） |
 | `presetApiKey` | `""` | 预设音色用的 Agent Plan Key（`ark-…`）；未配置时预设音色合成拒绝返回 `preset-key-missing` |
 
-环境变量覆盖：`DSH_VOICE_ALERT_PYTHON` / `DSH_VOICE_ALERT_PLAYER` / `DSH_VOICE_ALERT_LOG` / `DSH_VOICE_ALERT_DISABLED=1`。
+环境变量覆盖：`DSH_VOICE_ALERT_PYTHON` / `DSH_VOICE_ALERT_PLAYER` / `DSH_VOICE_ALERT_LOG` / `DSH_VOICE_ALERT_TTS_KEY`（等价于 config 的 `tts.apiKey`）/ `DSH_VOICE_ALERT_FFMPEG`（ffmpeg 可执行文件路径）/ `DSH_VOICE_ALERT_DISABLED=1`。
 
 ---
 
@@ -360,7 +370,7 @@ node test\self-check.mjs --no-sound   # 只跑逻辑与形状断言，不出声
 > 直接调播放器，所以即使你把「提醒方式」设成语音，也会听到音效测试用例在响。
 > **不想被吵就用 `--no-sound`**（v0.4.2 起真实播放用例之间已加等待，不会几条叠在一起合唱）。
 
-覆盖 **278 项断言**（完整模式含真实播放/播放器触发时 **299 项**）：事件回调是否真的驱动播放、每 turn 去重、错误优先、5s 节流、**fail→complete 连声闸门（1s 内不播 / 4s 后照播 / 设 0 关闭）**、
+覆盖 **312 项断言**（`--no-sound` 模式；完整模式含真实播放/播放器触发时 **335 项**）：事件回调是否真的驱动播放、每 turn 去重、错误优先、5s 节流、**fail→complete 连声闸门（1s 内不播 / 4s 后照播 / 设 0 关闭）**、
 子代理跳过、abort 策略、总开关、播放命令形状（必须 powershell Start-Process、不得 DETACHED_PROCESS）、
 增益版优先/原始版回退/无音频静默降级、**免凭据控制通道（控制文件触发 + status.json 快照 + 非法内容拒绝）**、
 **HTTP 路由层（注册路径 + 回环 200 / 非回环 403 / 未知 kind 400）**，以及**真实播放链路**
@@ -386,6 +396,10 @@ v0.3.1 起额外断言**不再注册任何 `/reading/*` 路由**（朗读功能�
 | `POST /dsh-voice-alert/voices/probe` | 试合：约 20 字真实 TTS 一次（不写文件），返回 `{ok, bytes, code, error}` |
 | `GET /dsh-voice-alert/sfx/list` | 内置音效目录（20 项 + 每项是否在库 `present`）+ 当前 `alertMode`/`sfxByKind`（v0.3.3） |
 | `GET /dsh-voice-alert/sfx/play?name=<key>` | 试听一个内置音效；`name` 必须是目录 key，否则 400（v0.3.3） |
+| `GET\|POST /dsh-voice-alert/settings` | 读写设置（`enabled` / `alertMode` / `sfxByKind` / 文案 / 音量等；GET 返回当前解析值，POST 落盘 config.json） |
+| `POST /dsh-voice-alert/generate` | 触发一次三条文案的语音生成（需要已配 Key 与选中音色）；返回任务句柄 |
+| `GET /dsh-voice-alert/generate-status` | 查询生成进度与结果（`{state, done, total, errors}`），配合 `/generate` 使用 |
+| `GET /dsh-voice-alert/preview?kind=complete\|fail\|approval` | 试听解析后的音频（不写入日志、不计数器），用于确认文案/音色是否生效 |
 
 🔴 **DSH Desktop 上的 403 是官方设计，不是插件 bug**（2026-09-15 实证）：
 桌面壳把**所有** HTTP 路由（含插件路由）包了一层浏览器访问闸门——

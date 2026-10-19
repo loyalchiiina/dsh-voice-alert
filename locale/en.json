@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "Voice Alert",
-    "description": "Speak task milestones, errors and completions out loud so you can step away from the screen."
+    "description": "Announce task completion and errors out loud so you can step away from the screen. Ships 20 built-in sound effects that work with zero config and no API key, or clone your own voice; three alert modes: voice / sound effect / off."
   }
 }

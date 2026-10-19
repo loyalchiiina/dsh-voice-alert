@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.4.13 — 2026-10-19
+
+### 文档与代码对齐（无运行时改动）
+
+对 README、插件描述、locale 文案做了一次逐条比对，把 8 处「文档说得比代码多」的地方全部改回真实行为。
+
+| # | 位置 | 原写法 | 实际行为 | 取证 |
+|---|---|---|---|---|
+| 1 | README 提醒方式表 / 首段 | 「自动播报完成/失败/审批」 | 自动播报**只有完成 / 失败**两种 | 只监听 `session/event`（turn 结束）、`agent/error`、`tools/result`；`engine.js` 无任何权限/审批事件监听 |
+| 2 | README 手动验证表 | 「完成/失败/审批」并列，读起来像三事件都自动 | `approval` 仅能手动触发 `GET /play?kind=approval` / `preview` / 控制文件 | 同上 |
+| 3 | README `alertMode` 表 | `voice` 标为「默认」 | 默认是 **`sfx`**（装完即用，不需要 Key） | `lib/config.js:223` `alertMode` 默认值 `"sfx"` |
+| 4 | README 断言数 | 278 项（完整 299） | **312 项**（`--no-sound`）/ 完整模式 **335 项** | `node test/self-check.mjs --no-sound` 实跑 |
+| 5 | README 处理链 | `alimiter=limit=0.98` | `limit=0.95`（峰值压 0.95≈−0.45 dBFS） | 实际 ffmpeg 参数 |
+| 6 | README 环境变量 | 4 个 | 6 个（漏 `DSH_VOICE_ALERT_TTS_KEY`、`DSH_VOICE_ALERT_FFMPEG`） | `lib/config.js:642-650` |
+| 7 | README 路由表 | 缺 4 条 | 漏 `/settings`、`/generate`、`/generate-status`、`/preview` | `lib/index.js` 路由注册 |
+| 8 | `cordis.patch.yml` 注释 | 「host-only，无客户端 bundle、无 UI」 | 有 `lib/client.js`（`__ModuleLoader__` bundle，`platform: web`）渲染设置页卡片 | `package.json` `dsh.client` + `lib/client.js` 存在 |
+
+### 同步内容
+
+- `package.json` `version` 0.4.12 → **0.4.13**；`description` 改为「自动播报完成/失败 + 审批手动」，中英双语
+- `locale/zh.json` / `locale/en.json` `description` 同步（原先写「任务里程碑」且未提三种提醒方式）
+- `README.md` 新增「⚠️ 关于审批事件」警示块，首段、提醒方式表、手动验证表、`alertMode` 表、断言数、处理链、环境变量、路由表共 8 处修正
+- `cordis.patch.yml` 注释由「host-only」改为「host + web-client bundle row」
+
+### 教训
+
+写 README 时把「音效槽位有三个」误当成「自动事件有三个」。槽位数量 ≠ 事件源数量——`sfxByKind` 里有 `approval` 这一格，不代表有代码去触发它。
+
 ## 0.4.12 — 2026-10-14
 
 ### 合规性改进（无功能改动）
