@@ -49,8 +49,11 @@ import {
   normalizeSfxByKind,
 } from "../lib/config.js";
 import {
+  clearImportMarker,
   createGenerator,
   fingerprintFor,
+  importMarkerPath,
+  isImportedKind,
   planChanges,
   renameWithRetry,
   tempGainPath,
@@ -253,7 +256,9 @@ wired.ctx.emit("session/event", root, sessionEvent("turn/end", { turn: 3, reason
 check("duplicate turn/end ignored", wired.calls.length === beforeDupe, "calls " + beforeDupe + " -> " + wired.calls.length);
 
 section("2d. 5s error throttle");
-const fresh = mount({ errorMinIntervalMs: 5000 }, { tmpDir });
+// 此段只验证 errorMinIntervalMs 的 5s 时间窗，故显式关掉 failOncePerTurn（按轮去重），
+// 否则同一 turn 内的第二次失败会被「每轮只播一次」拦掉，两个机制混在一起测不清。
+const fresh = mount({ errorMinIntervalMs: 5000, failOncePerTurn: false }, { tmpDir });
 const s2 = rootSession("session-root-2");
 fresh.ctx.emit("session/event", s2, sessionEvent("turn/start", { turn: 1 }));
 fresh.ctx.emit("tools/result", toolExec(s2, "tool_a"), { isError: true });
@@ -262,6 +267,90 @@ check("second error within 5s is throttled", fresh.calls.length === 1, JSON.stri
 fresh.clock.value += 5000;
 fresh.ctx.emit("tools/result", toolExec(s2, "tool_c"), { isError: true });
 check("error after 5s plays again", fresh.calls.length === 2, JSON.stringify(fresh.calls));
+
+section("2d2. failOncePerTurn (default true): one fail cue per turn, however many calls fail");
+// 实测缺陷（Lead 探针，errorMinIntervalMs=5000、6 次失败各隔 6s）：旧逻辑播 6 次。
+// 5s 窗只限速、不去重，所以长轮次里失败间隔一超过 5s 就一次次响。failOncePerTurn 让
+// 同一 "sessionId#turn" 只播第一次 fail（仍 markErrored，turn/end 不会叠 complete）。
+const onceTurn = mount({}, { tmpDir });
+const s5 = rootSession("session-root-once");
+onceTurn.ctx.emit("session/event", s5, sessionEvent("turn/start", { turn: 1 }));
+for (let i = 0; i < 6; i++) {
+  onceTurn.clock.value += 6000; // 每次都越过 5s 限速窗：拦住它的必须是按轮去重，不是限速
+  onceTurn.ctx.emit("tools/result", toolExec(s5, "tool_" + i), { isError: true });
+}
+check(
+  "6 failures in one turn (6s apart) play exactly 1 fail",
+  onceTurn.calls.filter((c) => c.kind === "fail").length === 1,
+  JSON.stringify(onceTurn.calls),
+);
+onceTurn.clock.value += 6000;
+onceTurn.ctx.emit("session/event", s5, sessionEvent("turn/end", { turn: 1, reason: { kind: "error" } }));
+check(
+  "that turn's errored turn/end stacks no second fail (and no complete)",
+  onceTurn.calls.length === 1 && onceTurn.calls.filter((c) => c.kind === "complete").length === 0,
+  JSON.stringify(onceTurn.calls),
+);
+onceTurn.clock.value += 6000;
+onceTurn.ctx.emit("session/event", s5, sessionEvent("turn/start", { turn: 2 }));
+onceTurn.ctx.emit("tools/result", toolExec(s5, "tool_next"), { isError: true });
+check(
+  "a NEW turn fails again (one cue per turn, not per session)",
+  onceTurn.calls.filter((c) => c.kind === "fail").length === 2,
+  JSON.stringify(onceTurn.calls),
+);
+const onceOff = mount({ failOncePerTurn: false }, { tmpDir });
+const s6 = rootSession("session-root-once-off");
+onceOff.ctx.emit("session/event", s6, sessionEvent("turn/start", { turn: 1 }));
+for (let i = 0; i < 6; i++) {
+  onceOff.clock.value += 6000;
+  onceOff.ctx.emit("tools/result", toolExec(s6, "tool_" + i), { isError: true });
+}
+check(
+  "failOncePerTurn=false restores 6 plays for 6 failures (control)",
+  onceOff.calls.filter((c) => c.kind === "fail").length === 6,
+  JSON.stringify(onceOff.calls),
+);
+// stats 计数 + log 一行 + playManual 豁免：直接驱动 engine（与 mount 同一条决策链）
+let gateClock = 1000000;
+const gateCalls = [];
+const gateLogs = [];
+const gated = createEngine({
+  config: Object.assign({}, DEFAULT_CONFIG),
+  play(kind, meta) {
+    gateCalls.push({ kind, meta });
+  },
+  log(message) {
+    gateLogs.push(String(message));
+  },
+  now() {
+    return gateClock;
+  },
+});
+const gs = rootSession("session-gate-1");
+gated.onSessionEvent(gs, sessionEvent("turn/start", { turn: 1 }));
+for (let i = 0; i < 6; i++) {
+  gateClock += 6000;
+  gated.onToolResult(toolExec(gs, "tool_" + i), { isError: true });
+}
+const gateStats = gated.snapshot().stats;
+check(
+  "suppressed fails are counted in stats.failSuppressedPerTurn and logged",
+  gateStats.failPlaysImmediate === 1 &&
+    gateStats.failSuppressedPerTurn === 5 &&
+    gateStats.throttled === 0 &&
+    gateLogs.some((line) => line.indexOf("fail suppressed by failOncePerTurn: session-gate-1#1") >= 0),
+  JSON.stringify(gateStats) + " logs=" + JSON.stringify(gateLogs),
+);
+gated.playManual("fail");
+gated.playManual("fail");
+check(
+  "playManual('fail') twice in one turn both play (manual is exempt)",
+  gateCalls.filter((c) => c.kind === "fail" && c.meta && c.meta.source === "manual").length === 2 &&
+    gateStats.failSuppressedPerTurn === 5,
+  JSON.stringify(gateCalls),
+);
+gated.dispose();
 
 section("2e. subagent sessions are skipped");
 const sub = mount({}, { tmpDir });
@@ -687,6 +776,52 @@ const prosodyPlan = planChanges(planConfig, ["complete"]);
 check("changed prosody also counts as a change", prosodyPlan.changed.length === 1, JSON.stringify(prosodyPlan));
 const forcedPlan = planChanges(planConfig, ["complete", "fail", "approval"], { force: true });
 check("force ignores the snapshot", forcedPlan.changed.length === 3 && forcedPlan.reused.length === 0, JSON.stringify(forcedPlan));
+// --- 2e. 导入的 mp3 不得被 TTS 覆盖（P0-4）------------------------------------
+// 用户用「⬆ 导入 MP3」换掉某条播报后，磁盘上的音频是用户自己的文件。改文案
+// 触发生成时绝不能把它冲掉（旧版会，且无备份可回滚）。导入路由写一个标记
+// 文件，planChanges 见到标记就把该 kind 从 changed 里摘出去。
+const importedKind = "complete";
+mkdirSync(planConfig.audioOriginDir, { recursive: true });
+check(
+  "import marker path sits next to the origin file",
+  importMarkerPath(importedKind, planConfig) === join(planConfig.audioOriginDir, "voice-alert-complete-poetic.imported.json"),
+  importMarkerPath(importedKind, planConfig),
+);
+check("no marker yet -> kind is not imported", isImportedKind(importedKind, planConfig) === false, String(isImportedKind(importedKind, planConfig)));
+writeFileSync(
+  importMarkerPath(importedKind, planConfig),
+  JSON.stringify({ kind: importedKind, bytes: 123, importedAt: "2026-01-01T00:00:00.000Z", backupDir: "x", sha256: "abc" }),
+  "utf8",
+);
+check("marker present -> kind is imported", isImportedKind(importedKind, planConfig) === true, String(isImportedKind(importedKind, planConfig)));
+planConfig.prosody.speed_ratio = 1.05;
+planConfig.texts.complete = "A changed again";
+const importPlan = planChanges(planConfig, ["complete", "fail", "approval"]);
+check(
+  "imported kind is skipped, not regenerated, when its text changes",
+  importPlan.changed.indexOf("complete") === -1 && importPlan.skippedImported.indexOf("complete") !== -1,
+  JSON.stringify(importPlan),
+);
+check(
+  "imported kind does not pollute reused either",
+  importPlan.reused.indexOf("complete") === -1,
+  JSON.stringify(importPlan),
+);
+const importForcedPlan = planChanges(planConfig, ["complete", "fail", "approval"], { force: true });
+check(
+  "force may still replace imported audio (explicit user intent)",
+  importForcedPlan.changed.indexOf("complete") !== -1 && importForcedPlan.skippedImported.length === 0,
+  JSON.stringify(importForcedPlan),
+);
+clearImportMarker(importedKind, planConfig, () => {});
+check("clearImportMarker removes the marker", isImportedKind(importedKind, planConfig) === false, String(isImportedKind(importedKind, planConfig)));
+const afterClearPlan = planChanges(planConfig, ["complete"]);
+check(
+  "after the marker is gone the kind is regenerated again",
+  afterClearPlan.changed.indexOf("complete") !== -1 && afterClearPlan.skippedImported.length === 0,
+  JSON.stringify(afterClearPlan),
+);
+planConfig.texts.complete = "A";
 
 const mockCalls = [];
 const mockConfig = Object.assign({}, planConfig, {

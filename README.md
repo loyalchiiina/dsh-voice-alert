@@ -20,7 +20,12 @@ DSH（DeepSeek Harness）**对话语音播报插件**：一轮对话结束自动
 * **v0.4.10 窄面板不溢出**：语速 / 音调 / 音量 一行的控件宽度被 `min-width` 锁死
   （最小 494px），面板比这窄时**第三个输入框溢出卡片右边缘**。现改为可换行 +
   解除宽度锁 + 容器可压缩。
-* 新增 32 条回归断言（主题 22 + 布局 10），自检 **312 项全过**（`--no-sound`；完整模式 335 项）。
+* 新增 32 条回归断言（主题 22 + 布局 10）。自检规模随版本增长，v0.4.15 的 `--no-sound` 实测 **325 过 / 1 失败**（唯一失败是测试自身环境限制，见 §自检）。
+
+**v0.4.15** 关键修复：**预设音色 Key 不会再被「留空保存」清掉**。此前在设置页点「保存音色库」时，
+若「预设音色 Key」输入框是空的，会把 `config.json` 里已存好的 `presetApiKey` 覆盖成空串（无提示、无备份）。
+现在三层守卫：前端留空时根本不提交该字段、宿主只在非空时写入、落盘函数同样只接受非空值
+（真要清空必须显式传 `clearPresetApiKey: true`）。同时新增「已配置 / 未配置」状态回显，留空是否安全一眼可辨。
 
 **v0.4.3** 关键修复：**默认不再做「静音预热」** —— 实测发现预热会在播报前多开关一次音频端点，
 **打断蓝牙耳机上正在播放的音乐**（v0.3.5 引入的副作用）。现在 `prewarmMs: 0`（默认不预热），
@@ -125,6 +130,18 @@ different one when something failed, plus a settings-section voice library.
 | 播放失败全线静默降级（缺文件→蜂鸣、异常→仅日志），绝不影响 DSH 运行 | Silent fallback everywhere (missing file → beep, exceptions → log only), never affects DSH |
 | 蓝牙耳机专项适配：默认不预热（`prewarmMs: 0`）不再打断音乐，实测文档齐全 | Bluetooth headset tuning: prewarm off by default (no music cuts), documented with measurements |
 
+### 音频导出 / 导入 · MP3 export & import
+
+| 中文 | English |
+|---|---|
+| 试听旁一键**下载 mp3**（每条播报独立下载，可选增益版/原件） | One-click **download** next to every preview (per-kind, gain or original) |
+| 试听旁一键**导入 mp3**（用你自己的音频替换某条播报，导入后自动试听一次） | One-click **import** next to every preview (replace any kind with your own audio, auto-previewed once) |
+| 导入前自动备份旧文件、同时写 origin 与 loud 两份、清掉过期 wav 缓存 | Auto-backup before overwrite, writes both origin and loud copies, drops the stale wav cache |
+| 导入限 10 MB，前后端双重校验，非 mp3 直接拒绝（不会误覆盖语音文件） | 10 MB cap enforced on both sides; non-mp3 rejected so voice files are never clobbered |
+| **导入的 mp3 不会被「生成语音」冲掉**：改别的文案时该条自动跳过合成（P0 修复） | **An imported mp3 survives later synthesis runs**: the kind is skipped while a text edit regenerates the others (P0 fix) |
+| 每行显示「已导入」状态，可一键**撤销导入**回到自动生成的语音 | Each row shows its imported state and offers one-click **undo** back to the synthesised clip |
+| 后台错误原因翻成中文人话（不是把 `not an mp3` 甩给用户） | Host error reasons are translated into plain Chinese instead of raw English |
+
 ### 界面与诊断 · UI & diagnostics
 
 | 中文 | English |
@@ -133,7 +150,7 @@ different one when something failed, plus a settings-section voice library.
 | 毫秒级阶段日志（`<data>\voice-alert.log`），任何延迟/无声可对着日志定位 | Millisecond stage logs (voice-alert.log) to pinpoint latency or silence |
 | 免凭据控制通道：写 `control.txt` 即触发真播，`status.json` 快照验收 | Credential-free control: write `control.txt` to trigger a real play, read `status.json` to verify |
 | **配色跟随宿主主题**：浅色/深色背景下都清晰（走 `--dsw-alias-*` 设计令牌，不写死色值） | **Theme-aware colors**: legible on both light and dark backgrounds (host design tokens, no hard-coded colors) |
-| 312 项自测断言（`--no-sound`；完整模式 335 项，含真实播放链路与浅/深主题回归），HTTP 路由仅回环 | 312 self-check assertions (`--no-sound`; 335 in full mode incl. real playback and light/dark theme regression); HTTP routes loopback-only |
+| **325 项自测断言**（`--no-sound` 实测 325 过 / 1 失败，失败项为测试自身环境限制），HTTP 路由仅回环 | 325 self-check assertions (`--no-sound`: 325 pass / 1 fail, the failure being a test-harness limitation); HTTP routes loopback-only |
 
 ---
 
@@ -223,7 +240,7 @@ different one when something failed, plus a settings-section voice library.
 * **删除**：正在使用的克隆音色不可删；其余随时可删。改完点「保存音色库」把整个数组写回 `config.json`，手工添加的音色重启不丢。
 * **生成侧按 kind 路由**：合成前按音色类型选 endpoint/resource/key/speaker，混用必 401/403 的坑已被显式拒绝——预设音色被选但 `presetApiKey` 未配置时，返回明确错误 `preset-key-missing`，绝不静默用错 Key。
 * 生成接口（`POST /generate`）支持 `speakerId` 参数，缺省用当前选中音色；音色切换会改变生成指纹，自动触发重合成。
-* 预设音色 Key 入口：音色库小节底部「预设音色 Key」输入框（`ark-…`，留空不修改），随「保存音色库」写入 `config.json` 的 `presetApiKey`。
+* 预设音色 Key 入口：音色库小节底部「预设音色 Key」输入框（`ark-…`，留空不修改），随「保存音色库」写入 `config.json` 的 `presetApiKey`。**留空 = 保持原值不动**（v0.4.15 三层守卫：前端不提交空字段、宿主只写非空、落盘只收非空；要清空必须显式传 `clearPresetApiKey: true`）。输入框下方实时显示「已配置（mask）/ 未配置」状态。
 
 **默认音色库为空**（v0.4.0 开源决定）：插件不代你选音色。克隆音色到火山「声音复刻」做（拿到 `S_` 开头的 ID），
 预设音色需要自己的 Agent Plan Key（`ark-…`）。两者都在设置页「音色库」里添加或批量导入，只存本机 `config.json`。
@@ -276,6 +293,7 @@ different one when something failed, plus a settings-section voice library.
 | `turnEndPlaysFailWhenErrored` | `true` | 该 turn 已出错 → turn 结束只播失败 |
 | `errorMinIntervalMs` | `5000` | 错误播报最短间隔（fail 自身节流） |
 | `suppressCompleteAfterFailMs` | `3000` | fail 播出后 N ms 内的 complete 一律抑制（断连声）；`0` 关闭 |
+| `failOncePerTurn` | `true` | 同一个 turn 内 fail 只播一次（v0.4.14）。长轮次里多次工具失败不会反复响；手动 `/play` 不受此限；`false` 恢复旧行为（每次失败都播，仅受 `errorMinIntervalMs` 限速） |
 | `abortPlays` | `"none"` | 用户中断的 turn：`none` / `complete` / `fail` |
 | `skipSubagentSessions` | `true` | 子代理会话不播 |
 | `countSubagentErrors` | `false` | 子代理错误是否计入父会话 |
@@ -370,7 +388,7 @@ node test\self-check.mjs --no-sound   # 只跑逻辑与形状断言，不出声
 > 直接调播放器，所以即使你把「提醒方式」设成语音，也会听到音效测试用例在响。
 > **不想被吵就用 `--no-sound`**（v0.4.2 起真实播放用例之间已加等待，不会几条叠在一起合唱）。
 
-覆盖 **312 项断言**（`--no-sound` 模式；完整模式含真实播放/播放器触发时 **335 项**）：事件回调是否真的驱动播放、每 turn 去重、错误优先、5s 节流、**fail→complete 连声闸门（1s 内不播 / 4s 后照播 / 设 0 关闭）**、
+覆盖 **325 项断言**（`--no-sound` 实测；含真实播放/播放器触发的用例在完整模式下另跑）：事件回调是否真的驱动播放、每 turn 去重、错误优先、5s 节流、**fail→complete 连声闸门（1s 内不播 / 4s 后照播 / 设 0 关闭）**、
 子代理跳过、abort 策略、总开关、播放命令形状（必须 powershell Start-Process、不得 DETACHED_PROCESS）、
 增益版优先/原始版回退/无音频静默降级、**免凭据控制通道（控制文件触发 + status.json 快照 + 非法内容拒绝）**、
 **HTTP 路由层（注册路径 + 回环 200 / 非回环 403 / 未知 kind 400）**，以及**真实播放链路**
@@ -378,6 +396,11 @@ node test\self-check.mjs --no-sound   # 只跑逻辑与形状断言，不出声
 v0.3.0 追加：音色库保存/导入/去重（`saveVoicesConfig`/`parseVoiceImport`/`mergeVoiceImport`）、试合探针（mock TTS）、
 **kind 路由（clone vs preset 的 endpoint/resource/key/speaker 选择，mock 断言）**；
 v0.3.1 起额外断言**不再注册任何 `/reading/*` 路由**（朗读功能已移除）。
+
+> ⚠️ **已知失败 1 条（不是回归）**：`转换成功且产物非空 -- {"ok":false,...,"reason":"ffmpeg exit null "}`。
+> 自检用 `mkdtempSync` 自建临时配置目录，**不读运行时 `config.json`**，因此它的 `ffmpegPath` 为空、
+> `resolveFfmpeg()` 返回 null，wav 转码必然失败。运行时配置里 ffmpeg 已指向
+> `<data>\bin\ffmpeg.exe`，实际播放链路正常。想让这条也过，需要在自检里注入 ffmpeg 路径。
 
 ---
 
@@ -400,6 +423,9 @@ v0.3.1 起额外断言**不再注册任何 `/reading/*` 路由**（朗读功能�
 | `POST /dsh-voice-alert/generate` | 触发一次三条文案的语音生成（需要已配 Key 与选中音色）；返回任务句柄 |
 | `GET /dsh-voice-alert/generate-status` | 查询生成进度与结果（`{state, done, total, errors}`），配合 `/generate` 使用 |
 | `GET /dsh-voice-alert/preview?kind=complete\|fail\|approval` | 试听解析后的音频（不写入日志、不计数器），用于确认文案/音色是否生效 |
+| `GET /dsh-voice-alert/audio/download?kind=<kind>&variant=loud\|origin` | 下载该条播报的 mp3（v0.4.14）。`variant` 默认 `loud`（增益版），`origin` 为未增益原件；返回 `audio/mpeg` + `Content-Disposition: attachment` |
+| `POST /dsh-voice-alert/audio/import?kind=<kind>` | 用你自己的 mp3 替换该条播报（v0.4.14）。**body 为原始 mp3 字节**（非 JSON、非 base64），上限 10 MB；落盘前自动备份旧文件到 `audio\backups\import-<ts>\`，同时写 origin 与 loud 两份并清掉对应 wav 缓存；成功后写标记文件 `audio\origin\voice-alert-<kind>-poetic.imported.json`（含 kind/bytes/importedAt/backupDir/sha256），响应体带 `marker` 字段 |
+| `POST /dsh-voice-alert/audio/import/undo?kind=<kind>` | 撤销该条导入，从导入时的备份目录还原 origin 与 loud，删除标记与 wav 缓存。返回 `{ok:true,kind,restored:[…],markerDeleted:true}`；该条没导入过返回 404 `{ok:false,reason:"no import marker"}` |
 
 🔴 **DSH Desktop 上的 403 是官方设计，不是插件 bug**（2026-09-15 实证）：
 桌面壳把**所有** HTTP 路由（含插件路由）包了一层浏览器访问闸门——

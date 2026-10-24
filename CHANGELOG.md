@@ -1,5 +1,57 @@
 # Changelog
 
+## 0.4.15 — 2026-10-24
+
+### 缺陷修复
+
+| 严重度 | 缺陷 | 根因 | 修法 |
+|---|---|---|---|
+| P0 | 设置页「保存音色库」时，若预设音色 Key 输入框留空，会把 config.json 里已保存的 `presetApiKey` 覆盖成空串，且无提示、无备份 | `/voices/save` 把请求里的 `presetApiKey: ""` 当作「用户要清空」直接写入；前端 `voiceSave()` 也无条件提交该字段 | 三层守卫：①前端留空时**根本不带该字段**（`client.js` `voiceSave()`）；②宿主 `/voices/save` 只在 `length > 0` 时才写；③`saveVoicesConfig()` 落盘前同样只接受非空值，清空必须显式传 `clearPresetApiKey: true` |
+| P2 | 预设音色 Key 状态在前端不显示「是否已配置」，用户无法判断留空是否安全 | 缺少状态回显 | 新增 `renderPresetKeyState()`：已配置显示「已配置（mask）· 留空表示不修改」，未配置显示引导文案 |
+
+### 说明
+
+- 本次改动不涉及任何默认值变更，已有 `config.json` 不受影响。
+- 需重启 DSH 使宿主侧守卫生效。
+
+## 0.4.14 — 2026-10-24
+
+### 新增功能
+
+| 功能 | 说明 |
+|---|---|
+| **下载 MP3** | 每条播报的「试听」旁新增「⬇ 下载」，把当前音频存成 mp3 文件。宿主新增 `GET /audio/download?kind=&variant=loud|origin`，返回 `audio/mpeg` + `Content-Disposition: attachment`；`variant` 可选增益版（默认）或原件 |
+| **导入 MP3** | 每条播报的「试听」旁新增「⬆ 导入」，用你自己的 mp3 替换该条播报。宿主新增 `POST /audio/import?kind=`，接收原始 mp3 字节（上限 10 MB），落盘前自动备份到 `audio\backups\import-<ts>\`，同时写 origin 与 loud 两份并清掉过期 wav 缓存；前端导入成功后自动试听一次 |
+| **撤销导入** | 已导入的播报旁多一个「↩ 撤销导入」，从导入时的备份还原 origin + loud 并删掉标记。宿主新增 `POST /audio/import/undo?kind=`；`/settings` 与 `/status` 顶层回显 `imported: {complete,fail,approval}` |
+| **错误原因中文化** | 宿主返回的英文 reason（`not an mp3` / `audio file not found` / `body too large` 等 9 类）在前端统一翻成中文人话，未知原因保留原文兜底 |
+
+### 缺陷修复
+
+| 严重度 | 缺陷 | 根因 | 修法 |
+|---|---|---|---|
+| P0 | 响度增益全部跳过、wav 播放内核永远降级 MCI | `ffmpegPath` 指向不存在的 Tecplot 路径 | ffmpeg 复制进插件数据目录 `<data>\bin\ffmpeg.exe` 并改配置 |
+| P0 | `originalsDir` 指向不存在的旧路径 → original 候选恒不存在 | 配置遗留 | 改为 `<data>\audio\origin` |
+| P0 | 每次生成都全量重合成，白耗 TTS 额度 | `generate.js` 的 fingerprint 落库条件误排除 `gainSkipped` | 改为 `if (entry && entry.ok)`，并删掉随之成为死代码的 `else if` 分支 |
+| P1 | 播放时长按 192/160 kbps 估算，实际 mp3 为 64 kbps → 21.4s 只算成 7.15s，槽位提前释放抢声卡导致「点试听没声音」 | 固定码率常量 | 新增 `lib/mp3info.js` 纯 JS 解析 MP3 帧头（含 VBR Xing 头），head-slice 只读 64 KB；旧公式保留为 fallback |
+| P1 | 同一 turn 内多次工具失败连续播多次 fail | `agent/error` 与 `tools/result` 各自 emit，5s 窗只限速不按轮去重 | 新增 `failOncePerTurn`（默认 true），同 turn 内 fail 只播一次；手动 `/play` 豁免 |
+| P0 | 用户导入的 mp3 会被「生成语音」静默覆盖（改任意一条文案就冲掉全部导入，且无备份） | 合成流水线只比对文案指纹，完全不知道磁盘上的音频是用户导入的 | 导入时写标记 `audio\origin\voice-alert-<kind>-poetic.imported.json`（含 backupDir/sha256）；`generate.js` 在 `planChanges` 与 `generateOne` 两处按标记跳过该 kind，只有 `force`（强制重新生成）才覆盖 |
+| P2 | 导入长音频（或长台词）时，排队等声卡的 24 s 固定上限会在音频还没放完时提前放弃，新进程抢声卡 → 又回到「静默无声」 | `acquirePlaybackSlot` 用固定次数 `guard < 200` × 120 ms = 24 s，与放宽到 120 s 的时长上限脱节 | 改成按「当前占用剩余时长 + 5 s 余量」动态算截止时间，轮询节奏仍是 120 ms |
+
+### UI 改进
+
+三张卡片统一圆角 + 轻投影 + 图标标题（🔔 播报开关 / ✍️ 播报内容 / ⚙️ 高级设置），每张卡片加一句白话说明；试听 / 下载 / 导入收进同一动作组；卡片二改「一行一个事件」色点小块并分四段（✍️ 文案 / 🎚 声音设置 / 🚀 生成语音 / 🎤 换音色）；高级设置分三段（🔑 Key / 🔊 系统音量 / 🎼 音色库）。**原有 56 个 `dva-*` id（141 处引用）与 44 个函数逐个比对，删除 0 个，无功能删减**。
+
+### 新增路由
+
+| 路由 | 作用 |
+|---|---|
+| `GET /dsh-voice-alert/audio/download?kind=<kind>&variant=loud|origin` | 下载该条播报 mp3（二进制流） |
+| `POST /dsh-voice-alert/audio/import?kind=<kind>` | 导入 mp3 替换该条播报（原始字节 body），成功后写导入标记 |
+| `POST /dsh-voice-alert/audio/import/undo?kind=<kind>` | 撤销导入，从备份还原 origin + loud 并删标记 |
+
+### 自检
+
+`node test/self-check.mjs --no-sound` → **passed 325 / failed 1**（唯一失败为测试自身环境限制：self-check 用 mkdtemp 自建临时配置、不走运行时 config.json，故其 ffmpeg 仍为 null）。
 ## 0.4.13 — 2026-10-19
 
 ### 文档与代码对齐（无运行时改动）
