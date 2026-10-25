@@ -4,6 +4,13 @@
 
 > Full documentation: [English README](./README.md)
 
+## Novedades v0.4.18 · What's new
+
+* 🩹 **La biblioteca de voces ya no desaparece al recargar**: el panel de ajustes es un slot de React y la biblioteca se dibuja de forma imperativa, así que un re-render del host recreaba el contenedor vacío. Ahora hay tres capas anti-borrado (MutationObserver del contenedor + puerta de render + vigilante de aparición del slot).
+* 🗑 **El botón "Eliminar" por fin se ve en "Mi biblioteca de voces"**: la columna derecha se creaba pero nunca se añadía a la fila con `appendChild`. Ahora **cualquier fila se puede eliminar** y el cambio se guarda al instante; si borras la voz en uso, el host cambia `selectedVoiceId` a la primera voz disponible.
+* 💬 **Los globos de ayuda nunca se salen del panel**: eran `position:absolute` y el CSS no conoce el recorte `overflow` de los ancestros ni su propio ancho. Ahora, al mostrarse, JS mide el rectángulo real y lo recoloca dentro del área visible (con volteo arriba/abajo), recalculando en scroll y resize.
+* 🖼 **Capturas actualizadas**: dos capturas reales desidentificadas (modo voz / modo efectos) sustituyen a las anteriores.
+
 ## Novedades v0.4.17 · What's new
 
 * 🆓 **Voces gratuitas integradas (sin clave API)**: tercera ruta de voz `free` = texto-a-voz de Microsoft edge-tts. 7 voces de audición, encabezadas por una voz femenina dulce con acento de Taiwán (晓陈 / 晓陈·嗲 / 晓宇 / 晓宇·嗲 / 晓伊 / 晓晓 / 粤语晓曼). «设为当前» (fijar como actual) aplica al instante; «▶ 试听» (audición) sintetiza en el momento. **Requisitos**: Python instalado en la máquina y `pip install edge-tts` ejecutado (en China: añade `-i https://mirrors.aliyun.com/pypi/simple/`); la primera síntesis necesita red — el mp3 resultante queda en caché y después se reproduce sin conexión. Si falta algo, la interfaz lo dice explícitamente (`edge-python-missing` / `edge-tts-not-installed` / `edge-offline`) en lugar de romperse. Las voces gratuitas son un catálogo virtual del lado del servidor: no se escriben en `voices` de `config.json`, no se mezclan en la lista de `/voices`, no entran en `DEFAULT_VOICES` — tus propias voces con clave quedan intactas. (Ver [§4.3](./README.md#43-免费内置音色v0417-edge-tts零-key))

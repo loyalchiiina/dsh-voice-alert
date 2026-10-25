@@ -4,6 +4,13 @@
 
 > 完整文档以 [English README](./README.md) 为准，本页提供中文导读与关键信息速查。
 
+## v0.4.18 新特性速览 / What's new
+
+* 🩹 **音色库不再重载就消失**：设置面板是 React 槽位，而音色库是命令式写 DOM，宿主重渲染会把容器重建成空 div。现加三层防抹（容器 MutationObserver + 渲染闸门 + 槽位出生看门狗），重挂载后自动补画。
+* 🗑 **「我的音色库」终于看得见删除按钮**：根因是右栏 span 建好后从未 `appendChild` 到行上，按钮一直在内存里飘着。现任何一行都可删、**点完即存**（不用再点保存）；删掉正在使用的音色会自动切到库里第一个，不留悬空选择。
+* 💬 **悬浮气泡永不出框**：ⓘ / 🔈 的提示气泡是 `position:absolute`，纯 CSS 既不知道祖先 `overflow` 裁剪边界也不知道自己展开多宽，图标一贴边就顶出去被裁。现浮出瞬间用 JS 实测矩形夹回可见区（含上下翻转），滚动/缩放重算。
+* 🖼 **效果图更新**：两张脱敏实拍（语音模式 / 音效模式）替换旧图。
+
 ## v0.4.17 新特性速览 / What's new
 
 * 🆓 **免费内置音色（零 Key）**：新增第三条音色路线 `free` = 微软 edge-tts 字生语音。7 个试听音色，台湾腔甜美女声打头（晓陈 / 晓陈·嗲 / 晓宇 / 晓宇·嗲 / 晓伊 / 晓晓 / 粤语晓曼）；点「设为当前」立即生效、「▶ 试听」当场合成。**前提**：本机装有 Python 且执行过 `pip install edge-tts`（国内建议加 `-i https://mirrors.aliyun.com/pypi/simple/`），首次合成需联网，产物缓存后即可离线重放。缺依赖时界面会明确说缺什么（`edge-python-missing` / `edge-tts-not-installed` / `edge-offline`），不会崩。免费音色是服务端虚拟目录：不写进 `config.json` 的 `voices`、不混进 `/voices` 列表、不进 `DEFAULT_VOICES`，唯一闸门 `isVoicesLibraryId()`（手写 `free:xxx` 同样挡）；你自己配 Key 的音色完全不受影响。（详见 [24.3](./README.md#43-免费内置音色v0417-edge-tts零-key)）

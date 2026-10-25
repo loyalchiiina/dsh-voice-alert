@@ -12,7 +12,7 @@ DSH（DeepSeek Harness）**对话语音播报插件**：一轮对话结束自动
 其中审批只能手动触发），
 想用自己的声音再按 §4.1 一键克隆。**支持三种提醒方式**：🗣 语音播报 / 🎵 音效 / 🔕 关闭。
 
-**v0.4.18** 修两个界面缺陷：**音色库不再重载就消失**（React 重挂载自愈）+ **「我的音色库」终于看得见删除按钮**（并改为点完即存）。v0.4.17 的两件事（界面更紧凑 + 内嵌免费音色）见下。
+**v0.4.18** 修四类界面缺陷：**音色库不再重载就消失**（React 重挂载自愈）+ **音色库不再时隐时现**（槽位出生看门狗）+ **「我的音色库」终于看得见删除按钮**（任何行都可删、点完即存；删掉正在使用的音色会自动切到库里第一个）+ **试听图标的悬浮气泡永不出框**（浮出瞬间实测矩形再夹回可见区）。另更新两张脱敏效果图。v0.4.17 的两件事（界面更紧凑 + 内嵌免费音色）见下。
 
 * **🆓 免费内置音色（详见 §4.3）**：新增第三条音色路线 `free` = 微软 **edge-tts**（不要任何 API Key）。
   音色库顶部一组「🆓 免费内置音色 · 无需 Key」共 **7 个试听音色**（台湾腔甜美女声打头），
@@ -99,7 +99,7 @@ DSH（DeepSeek Harness）**对话语音播报插件**：一轮对话结束自动
 
 **v0.3.4** 依用户反馈再修（**界面不再出现任何具体人名**，插件可直接分发给别人用）：
 * 音色名一律由使用者在「音色备注」里自己填（默认留空）；界面只叫「**🎙 我的音色 · 语音合成**」。
-* **音效改成可勾选列表**：20 个音效各占一行，行内三个勾选框（完成/失败/审批，同事件互斥）+ 音效名 + 「▶ 试听」。列表由 React 直接渲染，根治 v0.3.3「选了没反应」（下拉 option 被重渲染清空）。
+* **音效改成可勾选列表**：20 个音效各占一行，行内三个勾选框（完成/失败/审批，同事件互斥）+ 音效名 + 「▶ 试听」。列表由 React 直接渲染，根治 v0.3.3「选了没反应」（下拉 option 被重渲染清空）。**（此处为 v0.3.4 当时的形态；v0.4.17 第十三/十四轮已改成「每条事件一个下拉」，现状见 §4.2。）**
 * **一键生成 + 明确反馈**：点「🎙 生成语音（一键更新）」会**先自动保存文案再合成**；运行中显示 `x/y` 进度，结束后明确显示「**✅ 语音更新成功！已重新合成 N 条，复用 M 条**」，失败显示「⚠️ 语音更新失败：… 合成出错」。
 * **克隆入口写进界面**：新增「克隆音色」行 + 两个链接——[声音复刻控制台](https://console.volcengine.com/speech/app)、[产品介绍/开通](https://www.volcengine.com/product/voicecloning)。
 * **修复「有时点试听没声音」**：所有播放入口（引擎播报 / `/preview` / `/sfx/play`）**串行化**——等上一个播完再开下一个，避免两个 python+MCI 进程抢声卡导致后一个静默失败。
@@ -136,7 +136,7 @@ different one when something failed, plus a settings-section voice library.
 | 🗣 语音：用**当前选中音色**朗读文案 —— 可选 §4.3 的免费内置音色（零 Key）、自己的克隆音色或预设音色（自动播报只有**完成 / 失败**两种，详见下方说明） | 🗣 Voice: the selected voice reads your lines — a free built-in voice (§4.3, no key at all), or your own clone / preset voice (only **done / fail** fire automatically — see note below) |
 | 🎵 音效：内置 20 个音效（提醒 10 + 大自然 10），零配置、无需 API Key 开箱即用 | 🎵 SFX: 20 built-in sounds (10 alerts + 10 nature), zero config, no API key needed |
 | 🔕 关闭：完成/失败/审批都不提醒 | 🔕 Off: no alerts at all |
-| 每个音效可勾选「完成/失败/审批」任一事件并单独试听 | Every SFX can be assigned to done/fail/approval (one event each) with per-row preview |
+| 每条事件（完成/失败/审批）各有一个下拉选音效，选中即生效，旁边带「▶ 试听 / ⬇ 导出 / ⬆ 导入」 | Each event (done/fail/approval) has its own dropdown; picking one applies immediately, with "▶ preview / ⬇ export / ⬆ import" next to it |
 
 > **⚠️ 关于「审批」事件**：插件只监听了三个 DSH 事件 —— `session/event`（turn 结束 → 完成）、
 > `agent/error`（→ 失败）、`tools/result`。**审批没有自动触发源**，`engine.js` 里也没有任何
@@ -151,7 +151,7 @@ different one when something failed, plus a settings-section voice library.
 | **🆓 免费内置音色（v0.4.17）**：第三条路线 `free` = 微软 edge-tts，**零 API Key**，7 个试听音色（台湾腔甜美女声打头），点「设为当前」立即生效、「▶ 试听」当场合成 | **🆓 Free built-in voices (v0.4.17)**: a third route `free` = Microsoft edge-tts, **no API key at all**, 7 audition voices (Taiwan-accent sweet female first), "set current" applies instantly, "▶ audition" synthesises on the spot |
 | 免费音色是服务端虚拟目录：不进 `config.json` 的 `voices`、不混进 `/voices` 列表、不进 `DEFAULT_VOICES`，绝不影响你自己的 Key 音色 | The free set is a server-side virtual catalogue: never written into `config.json` `voices`, never merged into the `/voices` list, not in `DEFAULT_VOICES` — your own key voices stay untouched |
 | 火山克隆音色 / 预设音色双路由（`seed-icl-2.0` / `seed-tts-2.0`），自动识别类型 | Clone & preset TTS routing (`seed-icl-2.0` / `seed-tts-2.0`), type auto-detected |
-| 批量导入（多行 `ID,备注` 或 JSON）、自动去重、逐条试合验证（免费音色同样可试合，自动分流到 edge 合成） | Batch import (`ID,note` lines or JSON) with dedup and trial-synthesis verification (free voices route to edge synthesis) |
+| 批量导入（多行 `ID,备注` 或 JSON）、自动去重；`POST /voices/probe` 可逐条试合验证（界面不再放「试合」按钮，免费音色同样自动分流到 edge 合成） | Batch import (`ID,note` lines or JSON) with dedup; `POST /voices/probe` verifies one voice with a real trial synthesis (no "probe" button in the UI; free voices route to edge synthesis) |
 | 生成指纹复用：文案/音色/语速/音调/音量没变就复用既有 mp3，零 TTS 消耗 | Fingerprint reuse: unchanged text/voice/params reuse existing mp3s, zero TTS calls |
 | 默认音色库为空，音色名由使用者自填——不含任何具体人名 | Empty default voice library, names filled in by the user — no personal data shipped |
 
@@ -280,10 +280,10 @@ different one when something failed, plus a settings-section voice library.
 | 预设（`preset`） | `/api/v3/plan/tts/unidirectional` | `seed-tts-2.0` | Agent Plan Key（`presetApiKey`，`ark-…`） | ID 以 `zh_`/`BV` 等开头 |
 | **免费内置（`free`，v0.4.17）** | 无 HTTP 端点（本机 edge-tts 子进程，走微软 Edge 朗读） | 无 | **不需要任何 Key** | ID 以 `free:` 开头（见 §4.3） |
 
-* 每行显示：类型徽标、音色 ID、可用性（✓可用 / 缺 key）、备注（可编辑）、「设为当前」、「试合」、「删除」。
-* **试合**：约 20 字短文本真实调用一次 TTS（不写入任何文件），成功显示 `✓ N B`，失败显示火山返回的错误码/信息。
+* 每行显示：类型徽标、当前圆点、音色 ID、可用性（✓可用 / 缺 key）、备注（可编辑）、「设为当前」、「删除」。免费音色那一组另有「▶ 试听」。
+* **试合（仅 API，界面无按钮）**：`POST /voices/probe` 用约 20 字短文本真实调用一次 TTS（不写入任何文件），成功返回 `{ok:true, bytes}`，失败返回火山错误码/信息。v0.4.18 起界面上不再放「试合」按钮（用户要求音色库少按钮）。
 * **批量导入**：粘贴多行 `ID,备注`（`#` 为注释）或 JSON 数组，自动识别类型、自动去重，幂等可反复导入。
-* **删除**：正在使用的克隆音色不可删；其余随时可删。改完点「保存音色库」把整个数组写回 `config.json`，手工添加的音色重启不丢。
+* **删除**（v0.4.18）：**任何一行都可删**，点完立刻写盘（不用再点保存）；删掉的正是「正在使用」的音色时，宿主会自动把 `selectedVoiceId` 切到库里第一个可用音色，不会留下悬空选择。备注等其它改动仍走下方「保存音色库」整体写回 `config.json`，手工添加的音色重启不丢。
 * **生成侧按 kind 路由**：合成前按音色类型选 endpoint/resource/key/speaker，混用必 401/403 的坑已被显式拒绝——预设音色被选但 `presetApiKey` 未配置时，返回明确错误 `preset-key-missing`，绝不静默用错 Key。`free` 则**完全不发 HTTP**，分流到本机 edge-tts 子进程（v0.4.17）。
 * 生成接口（`POST /generate`）支持 `speakerId` 参数，缺省用当前选中音色；音色切换会改变生成指纹，自动触发重合成。
 * 预设音色 Key 入口：音色库小节底部「预设音色 Key」输入框（`ark-…`，留空不修改），随「保存音色库」写入 `config.json` 的 `presetApiKey`。**留空 = 保持原值不动**（v0.4.15 三层守卫：前端不提交空字段、宿主只写非空、落盘只收非空；要清空必须显式传 `clearPresetApiKey: true`）。输入框下方实时显示「已配置（mask）/ 未配置」状态。
@@ -307,9 +307,10 @@ different one when something failed, plus a settings-section voice library.
 | 大自然（10） | 鸟鸣 / 蝉鸣 / 蛙鸣 / 雨声 / 海浪 / 溪流 / 风声 / 篝火 / 雷鸣 / 森林 |
 
 * **默认分配**：完成 → 成功号角，失败 → 木鱼，审批 → 叮咚（`sfxByKind`，可逐个更换）。审批槽位只在手动触发时用到（`/play?kind=approval` 或控制文件），不会自动响。
-* **选择方式**（v0.3.4）：每个音效一行，行内三个勾选框（完成/失败/审批，**同一事件只能勾一个**）+ 音效名 + 「▶ 试听」；列表由 React 直接渲染（不再用 DOM 追加 option，那会被重渲染清空）。
+* **选择方式**（v0.4.17 第十三 / 十四轮改版）：**每条事件一行**（完成 / 失败 / 审批），中段是一个**下拉框**（`dva-sfxselect-<kind>`，20 个音效按「🔔 提醒音 / 🌿 大自然」分组），选中即生效并落盘；同一位置旁边是「▶ 试听 / ⬇ 导出 / ⬆ 导入」。语音模式与音效模式**预渲染两套同构行**（`dva-row-voice-<kind>` / `dva-row-sfx-<kind>`），切模式只翻 `display`、零 React 重渲染，界面即时切换。
 * **试听**：「▶ 试听」走 `GET /sfx/play?name=<key>`，**不经过引擎**，绝不会影响完成/失败的判定；v0.3.4 起试听会**排队**（等上一个播完），连点不再出现"没声音"。
-* **完整性**：`GET /sfx/list` 返回目录 + 每个文件是否在库（`present`），设置页显示「共 20 个内置音效，已在库 N 个」。
+* **完整性**：`GET /sfx/list` 返回目录 + 每个文件是否在库（`present`）。v0.4.17 起界面**不再**显示「共 20 个内置音效，已在库 N 个」这行文字（用户要求精简，第十七轮删除）。
+* **导出 / 导入**（v0.4.17 恢复）：每条事件旁「⬇ 导出」走 `GET /sfx/download?name=<key>`，「⬆ 导入」走 `POST /sfx/import?name=<key>`（body = 原始 mp3 字节）；导入前自动备份旧音效并清掉该音效的 wav 缓存。
 * **来源**：提醒 10 个来自 Windows 系统音效（转 mp3）+ 1 个合成木鱼音；大自然 10 个来自 pacdv.com / mixkit.co 免费音效库。全部随插件本机存放，无外链。
 * **安全**：播放文件名只接受 `[a-z0-9-]` 的目录 key（`sfxPathFor` 再校验一次），`/sfx/play?name=../../x` 直接 400；音效同样走 scratch copy，不会被播放占用。
 
@@ -595,6 +596,8 @@ v0.3.1 起额外断言**不再注册任何 `/reading/*` 路由**（朗读功能�
 | `POST /dsh-voice-alert/voices/probe` | 试合：约 20 字真实合成一次（不写文件），返回 `{ok, bytes, code, error}`。选中的是 `free:` 音色时自动分流到 edge 合成（v0.4.17）。body 可选 `speakerId` 覆盖本次探针用的音色；**畸形的 `free:…` id 直接 400 `reason:"unknown-free-voice"`**（v0.4.17 缺陷修复 D4：以前这种串会落到 inline preset 分支，把你粘进来的字符串当 `speaker` 发给上游，白烧一次厂商调用、状态码形状也错） |
 | `GET /dsh-voice-alert/sfx/list` | 内置音效目录（20 项 + 每项是否在库 `present`）+ 当前 `alertMode`/`sfxByKind`（v0.3.3） |
 | `GET /dsh-voice-alert/sfx/play?name=<key>` | 试听一个内置音效；`name` 必须是目录 key，否则 400（v0.3.3） |
+| `GET /dsh-voice-alert/sfx/download?name=<key>` | 导出某个内置音效的 mp3（v0.4.17 恢复）。`name` 必须是目录 key，否则 400；返回 `audio/mpeg` |
+| `POST /dsh-voice-alert/sfx/import?name=<key>` | 用你自己的 mp3 替换某个内置音效（v0.4.17 恢复）：body 为原始 mp3 字节，落盘前备份旧文件并清掉该音效的 wav 缓存 |
 | `GET\|POST /dsh-voice-alert/settings` | 读写设置（`enabled` / `alertMode` / `sfxByKind` / 文案 / 音量等；GET 返回当前解析值，POST 落盘 config.json） |
 | `POST /dsh-voice-alert/generate` | 触发一次三条文案的语音生成；返回任务句柄。用火山音色需已配 Key，**选中的是 §4.3 免费音色时不需要任何 Key**（自动走 edge 合成，v0.4.17）。body 可选 `speakerId` 覆盖本次合成用的音色（面板从不发它，只有 API 调用方会用到）；`speakerId` 是 `free:` 开头但不在目录里 / 不像合法 edge 音色名时**直接 400 `unknown-free-voice`、一次上游调用都不发出**（v0.4.17 缺陷修复 D7 —— 以前这道闸只加在 `/voices/probe`，`/generate` 会把它当成 inline preset 真的发给厂商）；**去重指纹记录的是真正拿去合成的那个音色**（D3：以前指纹只记 `config.selectedVoiceId`，覆盖成 A 合成、指纹记的却是 B，之后换个覆盖会被判 `nothing-changed` 而留着旧音频） |
 | `GET /dsh-voice-alert/generate-status` | 查询生成进度与结果（`{state, done, total, errors}`），配合 `/generate` 使用 |
