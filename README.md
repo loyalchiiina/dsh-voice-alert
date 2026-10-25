@@ -3,14 +3,33 @@
 DSH（DeepSeek Harness）**对话语音播报插件**：一轮对话结束自动播报「完成」语音，
 出现错误 / 工具失败时播报「失败」语音。播放**绝不改动系统音量或静音状态**。
 
-![语音播报设置页](assets/settings-panel.png)
+| ![语音播报设置页 · 语音模式](assets/settings-panel.png) | ![语音播报设置页 · 音效模式](assets/settings-panel-sfx.png) |
+|---|---|
 
-> 设置页实拍（DSH 原生设置分区「语音播报」）：总控卡 → 我的音色 · 语音合成 → 高级设置折叠。
-> 配色跟随宿主主题（浅色 / 深色都清晰），窄面板下控件自动换行不溢出。
+> 设置页实拍（v0.4.18，DSH 原生设置分区「语音播报」）：左 = **语音播报模式**（三条文案 + 音色库，含 7 个免费内置音色），右 = **音效模式**（每条事件一个音效下拉）。配色跟随宿主主题（浅色 / 深色都清晰），窄面板下控件自动换行不溢出。高级设置里存 Key 的输入框、克隆音色 ID 与本机路径已脱敏。
 
 **让 DSH 干完活会开口说话** —— 装完即用，零配置：内置 **20 个音效**、三条播报文案（完成 / 失败 / 审批，
 其中审批只能手动触发），
 想用自己的声音再按 §4.1 一键克隆。**支持三种提醒方式**：🗣 语音播报 / 🎵 音效 / 🔕 关闭。
+
+**v0.4.18** 修两个界面缺陷：**音色库不再重载就消失**（React 重挂载自愈）+ **「我的音色库」终于看得见删除按钮**（并改为点完即存）。v0.4.17 的两件事（界面更紧凑 + 内嵌免费音色）见下。
+
+* **🆓 免费内置音色（详见 §4.3）**：新增第三条音色路线 `free` = 微软 **edge-tts**（不要任何 API Key）。
+  音色库顶部一组「🆓 免费内置音色 · 无需 Key」共 **7 个试听音色**（台湾腔甜美女声打头），
+  点「设为当前」立即生效、点「▶ 试听」当场合成并播放，**「🎙 生成语音」按钮随之直接可用**
+  （旧版只看火山 Key，选了免费音色按钮永远是灰的）。
+  前提：本机要有 Python 且装过 `edge-tts`，首次合成需联网 —— 缺什么界面就明说（`edge-python-missing` /
+  `edge-tts-not-installed` / `edge-offline`），不会崩。产物 mp3 缓存后可离线重放。
+  **这组是服务端虚拟目录**：不写进 `config.json` 的 `voices`、不混进 `/voices` 的 `list`、
+  也不进 `DEFAULT_VOICES`，所以开源版「不内置任何音色」的决定与你自己的音色库**一行都没变**，
+  切回自己的 Key 音色随时可行。
+* **🔎 界面紧凑改造**：按用户反馈「字体太大太稀疏，往下滑不方便；最上面的下载导入没用；最好一目了然」——
+  删掉「🔔 播报开关」卡顶部那排 ⬇下载 / ⬆导入 按钮（「✍️ 播报内容」每条播报本来就各带一对），
+  并把 25+ 处样式压缩（卡片内边距 16/18 → 11/13、外层间距 12 → 8、标题 17 → 15px、
+  正文/说明 → 11.5px、主按钮 15 → 13px 等）与 5 段长说明精简；一屏能看全的内容明显变多。
+
+> 自检规模随版本增长：当前 v0.4.18 的 `--no-sound` 实测 **472 过 / 0 失败**（另有 6 项跳过：都会真出声，`--no-sound` 下直接不执行，不计入通过/失败）。
+> 构成：§1–§16（0.4.16 及更早）共 **360 条** + §17「免费内置音色」**41 条** + §18「端到端复核缺陷回归」**21 条** + §19「第三轮复核缺陷回归」**8 条** + §20「客户端界面静态一致性」**42 条** = **472**。§18 覆盖第二轮实测报回的 6 个缺陷（D1~D6），§19 覆盖第三轮报回的 2 个缺陷（D7 `/generate` 缺畸形 free id 闸门、D8 free 名长度无上限），均已修复并有断言锁死。
 
 **v0.4.10 / v0.4.9** 界面两处修复：
 * **v0.4.9 主题自适应配色**：此前颜色**写死为深色主题色**（白字 + 亮底），
@@ -20,7 +39,21 @@ DSH（DeepSeek Harness）**对话语音播报插件**：一轮对话结束自动
 * **v0.4.10 窄面板不溢出**：语速 / 音调 / 音量 一行的控件宽度被 `min-width` 锁死
   （最小 494px），面板比这窄时**第三个输入框溢出卡片右边缘**。现改为可换行 +
   解除宽度锁 + 容器可压缩。
-* 新增 32 条回归断言（主题 22 + 布局 10）。自检规模随版本增长，v0.4.15 的 `--no-sound` 实测 **325 过 / 1 失败**（唯一失败是测试自身环境限制，见 §自检）。
+* 这两版共新增 32 条回归断言（主题 22 + 布局 10）。
+
+**v0.4.16** 关键修复：**三个「界面亮了但没生效」的坑**（用户实测反馈）：
+* **总开关点不动** —— 复选框是受控组件却没接 `onChange`，React 立刻按旧值回写，
+  表现就是「点了没反应」；而且改完还得再按一次「保存设置」。现改为**点完即存**。
+* **选了「音效播报」还是响人声** —— 提醒方式按钮只改了本地高亮、**根本没发 POST**，
+  宿主 `alertMode` 仍是 `voice` → 回合结束照旧合成并播放人声。现在三个按钮
+  （语音 / 音效 / 关闭）统一走 `persistPatch({ alertMode })`，点完即存。
+* **音量设 0 设不了** —— 三处硬编码 `0.2` 下限（前端校验 / 宿主归一化 / 输入框 `min`），
+  填 0 被静默丢弃或悄悄抬回 0.2。现在**音量下限单独为 0，0 = 静音**：语音与音效一起哑，
+  试听也哑，界面显示「🔕 当前音量 = 0（静音）」；语速 / 音调下限仍是 0.2。
+  注意**空框 ≠ 0**：清空输入框是「不改」，不会变成静音。
+* **越界值不再「假装保存成功」** —— 宿主对超范围的语速 / 音调 / 音量是**静默丢弃**的，
+  旧界面无论宿主收没收都写「已保存」。现在保存后拿回包里的 `applied.prosody` 与提交值逐项比对，
+  不一致就在状态行点名，例如「⚠ 未生效：音量 9（超出允许范围，已忽略）」。
 
 **v0.4.15** 关键修复：**预设音色 Key 不会再被「留空保存」清掉**。此前在设置页点「保存音色库」时，
 若「预设音色 Key」输入框是空的，会把 `config.json` 里已存好的 `presetApiKey` 覆盖成空串（无提示、无备份）。
@@ -100,7 +133,7 @@ different one when something failed, plus a settings-section voice library.
 
 | 中文 | English |
 |---|---|
-| 🗣 语音：用火山克隆音色朗读文案（自动播报只有**完成 / 失败**两种，详见下方说明） | 🗣 Voice: cloned-voice TTS reads your lines (only **done / fail** fire automatically — see note below) |
+| 🗣 语音：用**当前选中音色**朗读文案 —— 可选 §4.3 的免费内置音色（零 Key）、自己的克隆音色或预设音色（自动播报只有**完成 / 失败**两种，详见下方说明） | 🗣 Voice: the selected voice reads your lines — a free built-in voice (§4.3, no key at all), or your own clone / preset voice (only **done / fail** fire automatically — see note below) |
 | 🎵 音效：内置 20 个音效（提醒 10 + 大自然 10），零配置、无需 API Key 开箱即用 | 🎵 SFX: 20 built-in sounds (10 alerts + 10 nature), zero config, no API key needed |
 | 🔕 关闭：完成/失败/审批都不提醒 | 🔕 Off: no alerts at all |
 | 每个音效可勾选「完成/失败/审批」任一事件并单独试听 | Every SFX can be assigned to done/fail/approval (one event each) with per-row preview |
@@ -115,8 +148,10 @@ different one when something failed, plus a settings-section voice library.
 
 | 中文 | English |
 |---|---|
+| **🆓 免费内置音色（v0.4.17）**：第三条路线 `free` = 微软 edge-tts，**零 API Key**，7 个试听音色（台湾腔甜美女声打头），点「设为当前」立即生效、「▶ 试听」当场合成 | **🆓 Free built-in voices (v0.4.17)**: a third route `free` = Microsoft edge-tts, **no API key at all**, 7 audition voices (Taiwan-accent sweet female first), "set current" applies instantly, "▶ audition" synthesises on the spot |
+| 免费音色是服务端虚拟目录：不进 `config.json` 的 `voices`、不混进 `/voices` 列表、不进 `DEFAULT_VOICES`，绝不影响你自己的 Key 音色 | The free set is a server-side virtual catalogue: never written into `config.json` `voices`, never merged into the `/voices` list, not in `DEFAULT_VOICES` — your own key voices stay untouched |
 | 火山克隆音色 / 预设音色双路由（`seed-icl-2.0` / `seed-tts-2.0`），自动识别类型 | Clone & preset TTS routing (`seed-icl-2.0` / `seed-tts-2.0`), type auto-detected |
-| 批量导入（多行 `ID,备注` 或 JSON）、自动去重、逐条试合验证 | Batch import (`ID,note` lines or JSON) with dedup and trial-synthesis verification |
+| 批量导入（多行 `ID,备注` 或 JSON）、自动去重、逐条试合验证（免费音色同样可试合，自动分流到 edge 合成） | Batch import (`ID,note` lines or JSON) with dedup and trial-synthesis verification (free voices route to edge synthesis) |
 | 生成指纹复用：文案/音色/语速/音调/音量没变就复用既有 mp3，零 TTS 消耗 | Fingerprint reuse: unchanged text/voice/params reuse existing mp3s, zero TTS calls |
 | 默认音色库为空，音色名由使用者自填——不含任何具体人名 | Empty default voice library, names filled in by the user — no personal data shipped |
 
@@ -147,10 +182,12 @@ different one when something failed, plus a settings-section voice library.
 | 中文 | English |
 |---|---|
 | DSH 原生设置页「语音播报」分区：总控卡 + 常用设置 + 高级折叠，中文优先字体 | Native DSH settings section "语音播报": master card + common settings + collapsible advanced, CJK-first typography |
+| **紧凑排版（v0.4.17）**：卡片内边距 16/18 → 11/13px、外层间距 12 → 8px、卡标题 17 → 15px、正文/说明 → 11.5px、分节标题/输入框/次按钮 → 12.5px、主按钮 15 → 13px、行内动作按钮/音效行 → 11.5px；并删掉「🔔 播报开关」卡顶部多余的 ⬇下载 / ⬆导入 一排（每条播报本来就各带一对） | **Compact layout (v0.4.17)**: card padding 16/18 → 11/13px, outer gap 12 → 8px, card title 17 → 15px, body/desc → 11.5px, section titles/inputs/secondary buttons → 12.5px, primary button 15 → 13px, row action buttons & sfx rows → 11.5px; plus the redundant ⬇download / ⬆import strip on the master card removed (each cue row already carries its own pair) |
+| **说明文字一律悬浮展示（v0.4.17）**：常驻段落收进 ⓘ / 🔈 图标后的气泡，悬停（或键盘聚焦）才显示，平时不占版面；音色库每行还改成「一行放下」——行容器不换行、文本列可收缩到省略号、按钮不缩不折，窄面板下按钮不再被挤出卡片 | **Hover tooltips everywhere (v0.4.17)**: standing paragraphs moved into bubbles behind ⓘ / 🔈 icons, shown on hover (or keyboard focus) and taking no room otherwise; voice-library rows now stay on one line — no wrap, shrinkable text columns, non-shrinking buttons, so buttons no longer get pushed off the card on narrow panels |
 | 毫秒级阶段日志（`<data>\voice-alert.log`），任何延迟/无声可对着日志定位 | Millisecond stage logs (voice-alert.log) to pinpoint latency or silence |
 | 免凭据控制通道：写 `control.txt` 即触发真播，`status.json` 快照验收 | Credential-free control: write `control.txt` to trigger a real play, read `status.json` to verify |
 | **配色跟随宿主主题**：浅色/深色背景下都清晰（走 `--dsw-alias-*` 设计令牌，不写死色值） | **Theme-aware colors**: legible on both light and dark backgrounds (host design tokens, no hard-coded colors) |
-| **325 项自测断言**（`--no-sound` 实测 325 过 / 1 失败，失败项为测试自身环境限制），HTTP 路由仅回环 | 325 self-check assertions (`--no-sound`: 325 pass / 1 fail, the failure being a test-harness limitation); HTTP routes loopback-only |
+| **472 项自测断言**（`--no-sound` 实测 472 过 / 0 失败，另有 6 项跳过：都会真出声；构成 = §1–§16 共 360 条 + §17 41 条 + §18 21 条 + §19 8 条 + §20 42 条），HTTP 路由仅回环 | 472 self-check assertions (`--no-sound`: 472 pass / 0 fail; 6 skipped — all would really play audio; 360 in §1–§16 + 41 in §17 + 21 in §18 + 8 in §19 + 42 in §20); HTTP routes loopback-only |
 
 ---
 
@@ -222,34 +259,45 @@ different one when something failed, plus a settings-section voice library.
   仅当你自己在 `config.json` 里配了 `playerScript`（可选的共享播放器）时，原始版才改走它的 `--kind` 入口。
   两者都**不读写任何音频控制接口**：系统音量多大就多大，系统静音就无声。
 * 关闭增益版：`config.json` 里 `"preferLoudAudio": false`。
+* **增益是「尽力而为」，缺 ffmpeg 不算失败**：本机没装 ffmpeg（且 `ffmpegPath` 也没指到可用二进制）时，
+  插件把原始文件**直接复制**到增益版路径，合成结果里带 `gainSkipped: true` 与原因，`ok` 仍为 `true`、
+  该条提醒照常可播（只是音量没被抬高）。设置页的「音频状态」会显示这一情况，不会把它当成错误。
+  所以「自检里转换用例失败」与「插件不能用」是两件事 —— 前者只是这台机器缺 ffmpeg。
+* **ffmpeg 探测结果带缓存（v0.4.17 缺陷修复 D6）**：`resolveFfmpeg()` 以前每次调用都 `spawnSync("ffmpeg","-version")`，
+  而设置页一打开就要问一次（`GET /settings` 返回里的 `gain.ffmpeg`）—— 没装 ffmpeg 的机器每次开面板都得阻塞探一遍。
+  现在**探测成功的结果永久缓存**，**失败的结果只缓 60 s**（所以中途装上 ffmpeg 不用重启就能自愈）；
+  需要强制重探的调用（自检）走 `noCache` 逃生口。顺带也减少了打开面板时的子进程开销与加载时间。
 
 ---
 
 ## 4.1 音色库（需求 A · v0.3.0）
 
-设置页「语音播报」分区新增**音色库**小节，管理两类火山 TTS 音色：
+设置页「语音播报」分区新增**音色库**小节，管理三类 TTS 音色：
 
 | 类型 | 端点 | Resource | Key | 判定 |
 |---|---|---|---|---|
 | 克隆（`clone`） | `/api/v3/tts/unidirectional` | `seed-icl-2.0` | 控制台 Key（`tts.apiKey`） | ID 以 `S_` 开头 |
 | 预设（`preset`） | `/api/v3/plan/tts/unidirectional` | `seed-tts-2.0` | Agent Plan Key（`presetApiKey`，`ark-…`） | ID 以 `zh_`/`BV` 等开头 |
+| **免费内置（`free`，v0.4.17）** | 无 HTTP 端点（本机 edge-tts 子进程，走微软 Edge 朗读） | 无 | **不需要任何 Key** | ID 以 `free:` 开头（见 §4.3） |
 
 * 每行显示：类型徽标、音色 ID、可用性（✓可用 / 缺 key）、备注（可编辑）、「设为当前」、「试合」、「删除」。
 * **试合**：约 20 字短文本真实调用一次 TTS（不写入任何文件），成功显示 `✓ N B`，失败显示火山返回的错误码/信息。
 * **批量导入**：粘贴多行 `ID,备注`（`#` 为注释）或 JSON 数组，自动识别类型、自动去重，幂等可反复导入。
 * **删除**：正在使用的克隆音色不可删；其余随时可删。改完点「保存音色库」把整个数组写回 `config.json`，手工添加的音色重启不丢。
-* **生成侧按 kind 路由**：合成前按音色类型选 endpoint/resource/key/speaker，混用必 401/403 的坑已被显式拒绝——预设音色被选但 `presetApiKey` 未配置时，返回明确错误 `preset-key-missing`，绝不静默用错 Key。
+* **生成侧按 kind 路由**：合成前按音色类型选 endpoint/resource/key/speaker，混用必 401/403 的坑已被显式拒绝——预设音色被选但 `presetApiKey` 未配置时，返回明确错误 `preset-key-missing`，绝不静默用错 Key。`free` 则**完全不发 HTTP**，分流到本机 edge-tts 子进程（v0.4.17）。
 * 生成接口（`POST /generate`）支持 `speakerId` 参数，缺省用当前选中音色；音色切换会改变生成指纹，自动触发重合成。
 * 预设音色 Key 入口：音色库小节底部「预设音色 Key」输入框（`ark-…`，留空不修改），随「保存音色库」写入 `config.json` 的 `presetApiKey`。**留空 = 保持原值不动**（v0.4.15 三层守卫：前端不提交空字段、宿主只写非空、落盘只收非空；要清空必须显式传 `clearPresetApiKey: true`）。输入框下方实时显示「已配置（mask）/ 未配置」状态。
 
-**默认音色库为空**（v0.4.0 开源决定）：插件不代你选音色。克隆音色到火山「声音复刻」做（拿到 `S_` 开头的 ID），
+**默认音色库为空**（v0.4.0 开源决定）：插件不代你选**你自己的**音色。克隆音色到火山「声音复刻」做（拿到 `S_` 开头的 ID），
 预设音色需要自己的 Agent Plan Key（`ark-…`）。两者都在设置页「音色库」里添加或批量导入，只存本机 `config.json`。
+（v0.4.17 起页面上另有一组**不入库**的免费音色可直接用，见 §4.3 —— 它没有改变上面这条决定。）
 
 ---
 
 ## 4.2 音效提醒（需求 B · v0.3.3）
 
 不想折腾火山音色 / 不需要 API Key 时，把「提醒方式」切到 **🎵 音效** 即可：turn 结束就播一个内置音效。
+（想听到**人声**又不想配 Key，v0.4.17 起还有第三条路：§4.3 的免费内置音色。）
 
 **内置 20 个音效**（`<data>\sfx\*.mp3`，单声道 44.1 kHz / libmp3lame 128k，已做响度统一）：
 
@@ -270,10 +318,109 @@ different one when something failed, plus a settings-section voice library.
 | `alertMode` | 行为 | 需要 API Key |
 |---|---|---|
 | `sfx`（默认） | 播内置音效，**完全不调用 TTS**，装完即用 | 不需要 |
-| `voice` | 用你的克隆音色朗读三条文案（需自行配置火山 Key 并生成语音） | 需要 |
+| `voice` | 播报三条文案的语音，用**当前选中音色**：选 §4.3 的免费音色**不需要任何 Key**；选自己的克隆/预设音色才需要配 Key | 免费音色不需要 / 火山音色需要 |
 | `off` | 完成 / 失败都不提醒（审批本来就不会自动播放） | 不需要 |
 
-> `enabled`（总开关）优先级最高：关掉后三种模式一律静音（引擎层拦截，UI 保存立即生效）。
+> `enabled`（总开关）优先级最高：关掉后三种模式一律静音（引擎层拦截，勾选即存、立即生效）。
+
+---
+
+## 4.3 免费内置音色（v0.4.17 · edge-tts，零 Key）
+
+用户需求（2026-10-24）：**「内嵌有没有免费得不需要 api 得字生语音，安装上直接体验语音提醒」**，
+音色偏好「甜美得女生声音台湾腔」。此前语音模式**必须**先有火山 Key 才能出声，新装的用户只能听音效。
+
+### 它是什么
+
+第三条音色路线 `kind: "free"`，用 **edge-tts**（pip 上的 MIT 开源包）调用微软 Edge「大声朗读」的公开端点：
+**零凭据、零 Key**。新增模块 `lib/edgevoice.js` 负责合成，返回结构与火山 `synthesize()` 完全一致
+（`{ok, bytes, error?, reason?, kind}`，且**永不抛异常**），所以调用方只多一个 `kind === "free"` 分支。
+
+### 7 个试听音色（`FREE_VOICES`，`lib/config.js`）
+
+| id | 界面标签 | edge 音色 | pitch | rate |
+|---|---|---|---|---|
+| `free:tw-chen` | 台湾·晓陈（甜美女声） | `zh-TW-HsiaoChenNeural` | `+0Hz` | `+0%` |
+| `free:tw-chen-cute` | 台湾·晓陈·嗲（+25Hz 更甜） | `zh-TW-HsiaoChenNeural` | `+25Hz` | `+8%` |
+| `free:tw-yu` | 台湾·晓宇（柔和女声） | `zh-TW-HsiaoYuNeural` | `+0Hz` | `+0%` |
+| `free:tw-yu-cute` | 台湾·晓宇·嗲（+25Hz） | `zh-TW-HsiaoYuNeural` | `+25Hz` | `+8%` |
+| `free:cn-xiaoyi` | 大陆·晓伊（活泼女声） | `zh-CN-XiaoyiNeural` | `+0Hz` | `+0%` |
+| `free:cn-xiaoxiao` | 大陆·晓晓（温暖女声） | `zh-CN-XiaoxiaoNeural` | `+0Hz` | `+0%` |
+| `free:hk-hiumaan` | 粤语·晓曼（甜靓女声） | `zh-HK-HiuMaanNeural` | `+0Hz` | `+0%` |
+
+* `pitch` / `rate` 是 2026-10 用同一句文案**实测调校**出来的值（+25Hz / +8% 就是当时用户验收过的「嗲版」），
+  不是拍脑袋，改之前先重听。目录里没有「推荐」标记，`free:tw-chen` 只是**排在第一位**（台湾腔甜美女声）。
+* 熟练用户还可手写内联形式 `free:zh-TW-HsiaoChenNeural`（`isFreeVoiceId` 认这种形状），
+  此时标签显示「自定义 edge 音色（…）」，pitch/rate 用默认 `+0Hz` / `+0%`。
+  **名字部分上限 60 字符**（`FREE_VOICE_NAME_MAX`）；超长的既不算合法 free id，也不能白名单放行 ——
+  否则试听缓存文件名会超过 MAX_PATH、写盘失败被静默吞掉，变成每次试听都重新联网合成（见 §8 的 D8）。
+
+### 依赖前提（实话）
+
+免费 ≠ 无成本。要真的出声，需要：
+
+1. **本机有可用的 Python**（走 `resolvePython()`，会跳过 Windows「应用执行别名」那个假 `python` 存根）；
+2. **装过 edge-tts**：`pip install edge-tts`（国内建议 `pip install edge-tts -i https://mirrors.aliyun.com/pypi/simple/`）；
+3. **首次合成要联网**（edge-tts 是在线服务）。产物 mp3 落盘后就走普通音频链路，**之后可离线重放**。
+
+三者缺一，界面**明确告诉你缺哪个**，不会崩：音色库「🆓 免费内置音色」分组下方按检测结果直接给提示行
+（找不到 Python → 「⚠ 找不到可用的 Python：免费音色需要 Python + edge-tts…」；
+有 Python 但缺模块 → 「⚠ 本机已装 Python，但缺 edge-tts 模块：在终端执行 `pip install edge-tts` 后即可试听」），
+每条的可用性列显示 `✓可用` / `缺edge-tts`；试听失败时 reason 原样回显
+（`edge-python-missing` / `edge-tts-not-installed`（并附「装一下：pip install edge-tts」）/
+`edge-offline` / `edge-timeout` = 网络不通或超时）。检测结果由 `GET /free/runtime` 提供，
+**只查本机 python 与 `edge_tts` 能否 import，不测网络**，并带结果缓存 —— 但**正负分档**：
+检测通过缓存 30 s（免得每次开设置页都 spawn 一个进程），**检测失败只缓存 5 s**，
+这样用户照着提示 `pip install edge-tts` 装完，刷新页面立刻就能看到 `✓可用`，不会还顶着「缺 edge-tts」。
+另外，**试听一旦成功**，前端会就地把自己的检测结果改写成「python + edge-tts 都在」并立刻重画徽标 ——
+省掉一次刷新，也免得 30 s 缓存里还挂着旧结论。
+落盘的文件名一律先把音色 id 里的非法字符（**包括冒号**）洗成 `_`：`free:tw-chen` 里的冒号在 NTFS 上是
+**交替数据流（ADS）分隔符**，不洗的话删临时文件只会删掉那条流、宿主文件留在原地，每合成一次漏一个 0 字节垃圾文件。
+
+### 为什么它不影响你自己的音色库（关键设计）
+
+`FREE_VOICES` 是**服务端虚拟目录**，代码里有三条硬约束：
+
+* **不写进 `DEFAULT_VOICES`**（它仍是 `[]`）—— 开源版「不内置任何音色」的决定原样保留；
+* **不混进 `/voices` 的 `list`**：以**独立字段 `freeVoices`** 返回，`list` 里永远只有你自己的 key 音色；
+* **不落盘**：唯一闸门是 `config.js` 的 `isVoicesLibraryId(id)`（= `!isFreeVoiceId(id)`），`normalizeVoices` 与 `mergeVoiceImport` **都问它**，所以无论是 7 条目录 id 还是手写的 `free:zh-CN-XiaoxiaoNeural`，一律进不了 `config.json` 的 `voices`。此前判据分散在保存路径（只比 7 条目录 id）、导入路径与客户端前缀过滤，各写一套、互相打架 —— 手写 free 能落盘、又被客户端在下次保存时删掉；现在收成一个函数，不可能再自相矛盾。`/voices/save` 里的 `selectedVoiceId` 也**必须校验**（库里存在 / 合法 free id / 空串三者之一）才写入，乱粘一个串会被记进日志并忽略，不会让后续每次合成都报一个看不懂的 Key 错误。
+
+唯一持久化的新东西是 `selectedVoiceId` 可以指向一个 `free:` id ——
+`resolveConfig()` 专门为此开了口子（不因「不在库里」被顶回第一个音色），
+换回自己的 `S_`/preset 音色随时可行，两边互不干扰。
+
+### 界面与路由
+
+* 音色库分两组渲染：**「🆓 免费内置音色 · 无需 Key（点「设为当前」立即生效）」** 与
+  **「🔑 我的音色库 · 需要 Key（改完点下方「保存音色库」）」**（后者同时容纳克隆与预设两类）。
+  每条免费音色一行：`免费` 徽标 + 当前选中圆点 + 标签（悬停显示 edge 音色/pitch/rate）+ 可用性
+  （`✓可用` / `缺edge-tts`）+ **「设为当前」+「▶ 试听」**。点「设为当前」只提交 `selectedVoiceId`，**立即生效、不用再点保存**。
+* 选了免费音色后，**「🎙 生成语音」按钮立刻可用**（`currentVoiceReady()` 对 `free:` 直接返回 true），
+  不再误显示「未配置 TTS API Key」——这正是免费音色存在的意义。
+* 音色库每行按「一行放下」排版（v0.4.17）：行不换行、标签/备注列可收缩、按钮不缩不折，窄面板下也不会把按钮挤出卡片（§20l2 已把它钉成自检断言，光查字面量测不到复发）。「声音设置」卡的音色备注行同理：那句说明改走 ⓘ 悬浮气泡、备注框吃掉行的剩余宽度，窄面板下不再折成第二行（§20m / §20n 锁死）。
+* **悬浮气泡永不出框**（v0.4.18，用户实测报回「试听的展开消息显示不完整出框了」）：气泡是 `position:absolute` 挂在 ⓘ / 🔈 上，
+  纯 CSS 既不知道祖先容器（宿主设置页是 `overflow:auto`）的裁剪边界，也不知道自己展开后有多宽 —— 只要图标贴边，
+  `max-width:300px` 的气泡必然顶出去被裁。修法：浮出的瞬间用 JS 实测矩形再夹回来 ——
+  `tipClipRect(wrap)` 向上遍历祖先、把每个 `overflow` 非 `visible` 的矩形与视口求交集得到真可见区；
+  `placeTip(wrap)` 先按可用宽度夹紧 `maxWidth/minWidth`，再水平「右越界左移、左越界右移」夹回可见区，垂直方向下方放不下
+  而上方更宽裕时翻到锚点上方展开（返回 `inside` 供排错读，异常返回 `null` 不抛错）；
+  `ensureTipPlacement()` 在 `document` 上挂**一次**委托监听，`mouseover`/`focusin` 定位、`scroll`/`resize` 按新位置重算。
+  §20x / 20x2 / 20x3 / 20x4 / 20x5 是源码静态断言，20x6 / 20x7 / 20x8 / 20x9 是**桩几何功能测试**（喂假矩形断言真被夹回可见区）——
+  假 DOM 没有布局引擎，只写静态断言等于自嗨，变异测试已确认删掉夹紧即变红。
+* `POST /free/audition`：先过闸门（音量 0 → `muted`、提醒方式「关闭」→ `alertMode=off`，两者都**在解析 body 之前**，
+  所以静音时哪怕传错 id 也只会看到静音响应），再取 `speakerId`（必须合法 `free:…`，否则 400；
+  **名字超过 60 字符也算不合法 → 400**，v0.4.17 缺陷修复 D8：以前不设上限，超长名拼出的缓存文件名会超
+  MAX_PATH，写盘 `ENOENT` 只记日志，接口照样回 `200 ok:true`，于是**每次试听都在偷偷重新联网合成**），
+  用统一的 20 字试音文本
+  （`VOICE_PROBE_TEXT` = 「你好，这是一句试音。」）合成并播放；产物缓存到 `<data>\edge-cache\audition-<safeKey>.mp3`
+  （`<data>\edge-cache` = 配置键 `edgeCacheDir` 的默认值，v0.4.17 起可改到别的盘；`safeKey` = id 里的非法字符换成 `_` 并截断到 80 字符，避开 NTFS ADS 与超长路径）+ 同名 `.stamp.json` 戳记 —— **戳记是每个音色各自一份**，
+  共用一个戳记的话「先试听 A 再试听 B」会把 A 的戳记冲掉、A 的缓存白存。
+  **只有 id/edgeVoice/pitch/有效语速四项都没变才复用缓存**（改了调音参数一定听得见变化）。
+  与 `/preview`、`/sfx/play` **共用同一套闸门**：音量 0 → `muted`、提醒方式为「关闭」→ `alertMode=off`，都不出声。
+* `/voices/probe`（试合）与 `/generate`（一键生成）遇到 `kind === "free"` **自动分流**到 edge 合成，
+  落盘 / 响度增益 / 备份链路完全复用，不改动火山那条 HTTP 路径。
+* **「语速」滑块对免费音色同样生效**：`edgeRateFor()` 把 `speed_ratio` 折算成百分比**加**到目录 `rate` 上
+  （结果钳在 `[-90%, +200%]`），`pitch` 保持目录值不动 —— 免得把实测调好的音色参数覆盖掉。
 
 ---
 
@@ -285,7 +432,7 @@ different one when something failed, plus a settings-section voice library.
 | 键 | 默认 | 说明 |
 |---|---|---|
 | `enabled` | `true` | 总开关（关掉 = 语音和音效都静音） |
-| `alertMode` | `"sfx"` | 提醒方式：`sfx` 音效（默认，装完即用）/ `voice` 语音（需配 Key）/ `off` 关闭（v0.3.3） |
+| `alertMode` | `"sfx"` | 提醒方式：`sfx` 音效（默认，装完即用）/ `voice` 语音（选自己的火山音色需配 Key；选 §4.3 免费音色不需要）/ `off` 关闭（v0.3.3） |
 | `sfxByKind` | 成功号角 / 木鱼 / 叮咚 | 音效模式下三类事件各播哪个音效（v0.3.3，key 必须是内置目录里的） |
 | `sfxDir` | `<data>\sfx` | 内置音效目录（v0.3.3） |
 | `playOnTurnEnd` | `true` | 每个 turn 结束播一次 |
@@ -298,15 +445,21 @@ different one when something failed, plus a settings-section voice library.
 | `skipSubagentSessions` | `true` | 子代理会话不播 |
 | `countSubagentErrors` | `false` | 子代理错误是否计入父会话 |
 | `preferLoudAudio` | `true` | 优先播放增益版（音量不低的那一档） |
+| `prosody.speed_ratio` / `pitch_ratio` | `1.05` / `1.04` | 语速 / 音调（TTS 合成参数），可设下限 `0.2`。语速对**免费音色同样生效**：`edgeRateFor()` 把它折进 edge 的 `--rate`（钳在 `[-90%,+200%]`），`pitch_ratio` 不参与 —— 免费音色的 pitch 是目录里实测调好的值 |
+| `prosody.volume_ratio` | `1.0` | 音量。**允许 `0` = 静音**（v0.4.16）：语音与音效一声都不放，试听同样哑。缺字段不算静音。⚠️ 该值只作为 **TTS 合成参数**（以及「0 = 整条提醒掐掉」的开关）——`0.3` 这类中间值只让**人声**变轻，**内置音效的音量由系统音量决定**，不受此值影响 |
 | `loudSuffix` / `audioDir` / `originalsDir` | `-loud` / `<data>\audio` / 原始目录 | 音频定位 |
-| `pythonPath` / `playerScript` / `bundledPlayer` | 见文件 | 播放器路径 |
+| `pythonPath` / `playerScript` / `bundledPlayer` | 见文件 | 播放器路径。**`pythonPath` 同时是免费音色的 edge-tts 解释器**（同样走 `resolvePython()`，跳过 WindowsApps 假存根；`DSH_VOICE_ALERT_PYTHON` 可覆盖） |
 | `fallbackBeep` | `true` | 播不了时蜂鸣降级 |
 | `controlFile` / `controlResultFile` / `statusFile` | `<data>\control.txt` / `control-result.txt` / `status.json` | 免凭据文件控制通道 |
 | `controlPollMs` | `2000` | 控制文件轮询间隔 |
 | `logPath` / `logMaxBytes` | `<data>\voice-alert.log` / 1MB | 插件日志 |
-| `voices` | `[]`（空库） | 音色库（完整数组，可被 `/voices/save` 整体覆盖，手工添加重启不丢） |
-| `selectedVoiceId` | `""` | 当前选中音色（生成缺省用它；为空时需先在音色库点「设为当前」） |
+| `voices` | `[]`（空库） | 音色库（完整数组，可被 `/voices/save` 整体覆盖，手工添加重启不丢）。**§4.3 的 7 个免费音色不在这里、也永远写不进来** —— 唯一闸门 `isVoicesLibraryId()` 在 `normalizeVoices` / `mergeVoiceImport` 两处都挡（含手写的 `free:xxx`），`DEFAULT_VOICES` 仍是 `[]`，「不内置任何音色」的决定不变 |
+| `selectedVoiceId` | `""` | 当前选中音色（生成缺省用它；为空时需先在音色库点「设为当前」）。**可以指向 `free:…`（v0.4.17）**，`resolveConfig()` 专门放行，不会因为「不在库里」被顶回第一个 key 音色；`/voices/save` 只接受「库里存在 / 合法 free id / 空串」三种值，其余记日志忽略并**保持当前选择不动**（不会因为你粘进一串垃圾就悄悄换音色）。另有独立的有效性检查：只有当前选择**确实**被删掉了才归位到 `voices[0].id`（库空则 `""`）并留 `selection fell back to` 日志 |
 | `presetApiKey` | `""` | 预设音色用的 Agent Plan Key（`ark-…`）；未配置时预设音色合成拒绝返回 `preset-key-missing` |
+| `edgeCacheDir` | `<data>\edge-cache` | 免费音色（§4.3 edge-tts）**试听产物缓存目录**（v0.4.17）。命中缓存不重复合成、可离线重放。可改到别的盘（如 `D:\voice-edge-cache`）——以前这个路径写死在插件数据目录里，换不了盘，而且同机第二个实例会共用同一份缓存（第二个 mount 试听直接 `reused:true` 复用别人的 mp3），现在跟 `wavCacheDir` 一样是配置键。目录里每个音色各自一份 `audition-<safeKey>.mp3` + 同名 `.stamp.json` 戳记 |
+| `edgeTmpDir` | `<data>\edge-tmp` | 免费音色**合成过程的临时目录**（v0.4.17）：edge-tts 先把 mp3 落在这里（`edge-<时间戳>-<安全化 id>.mp3`），插件读成字节后交给调用方 —— `/free/audition` 再写进 `edgeCacheDir` 作试听缓存。**读成功、失败、超时、进程报错的任何一条退出路径都会删掉这个临时文件**（`edgevoice.js` 的 `finish()` 统一清理，文件名里的非法字符先换成 `_` 以免 NTFS ADS 删不干净）。同样可改盘；`<data>` 见下 |
+
+> `<data>` = 插件自己的数据目录 `C:\Users\<你>\.dsh\data\dsh-voice-alert`（代码里 `DATA_DIR = join(homedir(), ".dsh", "data", PLUGIN_ID)`）。两个键留空或不配就用默认值，**不配也不坏**。
 
 环境变量覆盖：`DSH_VOICE_ALERT_PYTHON` / `DSH_VOICE_ALERT_PLAYER` / `DSH_VOICE_ALERT_LOG` / `DSH_VOICE_ALERT_TTS_KEY`（等价于 config 的 `tts.apiKey`）/ `DSH_VOICE_ALERT_FFMPEG`（ffmpeg 可执行文件路径）/ `DSH_VOICE_ALERT_DISABLED=1`。
 
@@ -388,19 +541,42 @@ node test\self-check.mjs --no-sound   # 只跑逻辑与形状断言，不出声
 > 直接调播放器，所以即使你把「提醒方式」设成语音，也会听到音效测试用例在响。
 > **不想被吵就用 `--no-sound`**（v0.4.2 起真实播放用例之间已加等待，不会几条叠在一起合唱）。
 
-覆盖 **325 项断言**（`--no-sound` 实测；含真实播放/播放器触发的用例在完整模式下另跑）：事件回调是否真的驱动播放、每 turn 去重、错误优先、5s 节流、**fail→complete 连声闸门（1s 内不播 / 4s 后照播 / 设 0 关闭）**、
+覆盖 **472 项断言**（`--no-sound` 实测 472 过 / 0 失败 / 6 跳过；含真实播放/播放器触发的用例在完整模式下另跑）：事件回调是否真的驱动播放、每 turn 去重、错误优先、5s 节流、**fail→complete 连声闸门（1s 内不播 / 4s 后照播 / 设 0 关闭）**、
 子代理跳过、abort 策略、总开关、播放命令形状（必须 powershell Start-Process、不得 DETACHED_PROCESS）、
 增益版优先/原始版回退/无音频静默降级、**免凭据控制通道（控制文件触发 + status.json 快照 + 非法内容拒绝）**、
 **HTTP 路由层（注册路径 + 回环 200 / 非回环 403 / 未知 kind 400）**，以及**真实播放链路**
 （marker 文件证明子进程真的被拉起——直接链路与控制文件链路各验一次，并用同步播放验证 exit code 0 与占用音频设备时长）。
 v0.3.0 追加：音色库保存/导入/去重（`saveVoicesConfig`/`parseVoiceImport`/`mergeVoiceImport`）、试合探针（mock TTS）、
 **kind 路由（clone vs preset 的 endpoint/resource/key/speaker 选择，mock 断言）**；
-v0.3.1 起额外断言**不再注册任何 `/reading/*` 路由**（朗读功能已移除）。
+v0.3.1 起额外断言**不再注册任何 `/reading/*` 路由**（朗读功能已移除）；
+**v0.4.17 新增一节 §17「免费内置音色」共 41 条断言**：**edge 命令行形状（`-m edge_tts --no-progress --voice … --rate … --pitch … --text … --write-media …`，
+非法 rate/pitch 不传）**、**7 个目录 id/标签/pitch/rate 逐条锁定**、**唯一闸门 `isVoicesLibraryId()`：目录 id 与手写 `free:xxx` 一律被 `normalizeVoices` 和 `mergeVoiceImport` 同时挡住**（曾经宿主只比 7 条目录、客户端比前缀，两套规则打架 —— 现在两边都问同一个函数）、
+**被挡在库外的 free id 仍然能合成（走 `selectedVoiceId`，不依赖库）**、**`edgeRateFor` 语速折算与钳位**、**edge 失败原因分类
+（缺 Python / 缺 edge-tts 模块 / 网络不通 / 超时 / 空产物各归各的 reason，绝不谎报）**、
+**`/free/runtime` 与 `/free/audition` 路由（回环 + GET/POST 方法校验 + 静音与 `alertMode=off` 闸门 + 缓存戳记复用条件）**、
+**voice id 落盘前先洗掉非法字符（含冒号 —— NTFS 上冒号是 ADS 分隔符，不洗就会每次合成漏一个 0 字节文件）**
+（合成用注入的假 spawner，自检**不会出声、不会联网、不会真起 python**）。
+**v0.4.17 另有一节 §18「端到端复核发现的缺陷已修」共 21 条断言**（472 − 360 − 41 − 8 − 42 = 21；节名里的五组词对应
+「当前选择 / 悬空归位 / 伪造 free id / 指纹音色 / 探测缓存」）：锁定 **D1**（乱串 `selectedVoiceId` 被拒绝时
+**当前选择一个字都不动**、并且留下 `ignored unknown selectedVoiceId` 日志）、免费音色可被设为当前且
+**保存后 `voices` 一个字没多**（虚拟目录永不落盘）、**D2**（删掉当前选中的音色后不再悬空、归位到库里第一个并留
+`selection fell back to` 日志；反向 —— 当前是免费音色时保存音色库绝不能把它顶走）、**D4**（畸形 `free:…` id
+直接 400 `unknown-free-voice`，**一次上游调用都不发出**）、**D3**（指纹默认取 `selectedVoiceId`；带覆盖音色时
+指纹跟着记真正合成的那个，磁盘上录的是覆盖音色时换成别的覆盖必须判脏、用回当初那个才允许复用）、**D6**
+（第二次 ffmpeg 探测命中缓存不再 `spawnSync`，`noCache` 仍可强制重探）、**D5**（`edgeCacheDir` / `edgeTmpDir`
+走配置键、合成临时文件确实落在指定目录、默认值仍在插件数据目录内「不配也不坏」）。同样不出声、不联网。
+**v0.4.17 还有一节 §19「第三轮复核发现的缺陷已修」共 8 条断言**：**D7**（畸形 `free:…` id 的闸门以前只有
+`/voices/probe` 有，`/generate` 照收 → `resolveVoice` 当成 inline preset，配了 Agent Plan Key 的机器会把
+`free:../../etc/passwd` 原样当 speaker 打给厂商白烧额度、还回来一个半个失败的 202；现在两边共用
+`isMalformedFreeVoiceId()` 一个判定，`/generate` 直接 400 且**一次上游调用都不发出**，同时断言合法 free id
+不被这道闸误伤）、**D8**（自定义 free 名以前没有长度上限，300 字符的 id 能拼出超过 MAX_PATH 的缓存文件名，
+写盘 ENOENT 只记日志 → **每次试听都悄悄重新联网合成**；现在 `isFreeVoiceId` 把名字卡在 60 字符、边界恰好
+60 合法/61 拒，`/free/audition` 对超长名直接 400，缓存文件名再兜一层 `.slice(0, 80)`）。
 
-> ⚠️ **已知失败 1 条（不是回归）**：`转换成功且产物非空 -- {"ok":false,...,"reason":"ffmpeg exit null "}`。
-> 自检用 `mkdtempSync` 自建临时配置目录，**不读运行时 `config.json`**，因此它的 `ffmpegPath` 为空、
-> `resolveFfmpeg()` 返回 null，wav 转码必然失败。运行时配置里 ffmpeg 已指向
-> `<data>\bin\ffmpeg.exe`，实际播放链路正常。想让这条也过，需要在自检里注入 ffmpeg 路径。
+> ⚠️ **wav 转换用例现在算「跳过」而不是「失败」**：自检用 `mkdtempSync` 自建临时配置目录，**不读运行时 `config.json`**，
+> 因此它的 `ffmpegPath` 为空、`resolveFfmpeg()` 返回 null；本机没装 ffmpeg 时这条直接 SKIP（日志
+> `SKIP (本机没装 ffmpeg：wav 缓存转换跳过；插件运行时同样会退回原音频)`），不计入 472/0。
+> 运行时配置里 ffmpeg 已指向 `<data>\bin\ffmpeg.exe`，实际播放链路正常（缺 ffmpeg 时同样退回原 mp3）。
 
 ---
 
@@ -413,19 +589,21 @@ v0.3.1 起额外断言**不再注册任何 `/reading/*` 路由**（朗读功能�
 | `GET /dsh-voice-alert/status` | 解析后的配置、音频解析结果（增益版/原始版）、计数器 |
 | `GET /dsh-voice-alert/play?kind=complete\|fail\|approval` | 手动真播一次，用于重启后验证 |
 | `GET /dsh-voice-alert/reload` | 重新读取 `config.json`（不用重启 DSH） |
-| `GET /dsh-voice-alert/voices` | 音色库列表 + 选中 ID + 各音色可用性（clone 有 key / preset 有 key） |
-| `POST /dsh-voice-alert/voices/save` | 保存整个 voices 数组 + 选中 + `presetApiKey`（写入 config.json） |
-| `POST /dsh-voice-alert/voices/import` | 批量导入（多行 `ID,备注` 或 JSON 数组，自动识别类型、去重） |
-| `POST /dsh-voice-alert/voices/probe` | 试合：约 20 字真实 TTS 一次（不写文件），返回 `{ok, bytes, code, error}` |
+| `GET /dsh-voice-alert/voices` | 音色库列表 + 选中 ID + 各音色可用性（clone 有 key / preset 有 key）。免费音色走**独立字段 `freeVoices`**（v0.4.17），绝不混进 `list`；另有 `selectedIsFree` |
+| `POST /dsh-voice-alert/voices/save` | 保存整个 voices 数组 + 选中 + `presetApiKey`（写入 config.json）。free 家族由唯一闸门 `isVoicesLibraryId()` 在 `normalizeVoices` 里挡掉、**永不落盘**（v0.4.17）；`selectedVoiceId` 必须校验通过（库里存在 / 合法 free id / 空串）才写入，否则只记日志 `ignored unknown selectedVoiceId`、**原选择一个字都不动**（v0.4.17 缺陷修复 D1）。另有独立的有效性检查：只有当前选择确实被这次保存删掉了，才归位到 `voices[0].id`（库空则 `""`）并留 `selection fell back to` 日志（D2 —— 以前悬空的选择会让后续 `/generate` 仍返回 202 去合成一个不存在的音色） |
+| `POST /dsh-voice-alert/voices/import` | 批量导入（多行 `ID,备注` 或 JSON 数组，自动识别类型、去重）。free 家族同样被 `mergeVoiceImport` 挡住（v0.4.17，与 `normalizeVoices` 同一条规则），所以粘一行 `free:tw-chen,xx` 不会在库里冒出一个红色「缺 ark-key」 |
+| `POST /dsh-voice-alert/voices/probe` | 试合：约 20 字真实合成一次（不写文件），返回 `{ok, bytes, code, error}`。选中的是 `free:` 音色时自动分流到 edge 合成（v0.4.17）。body 可选 `speakerId` 覆盖本次探针用的音色；**畸形的 `free:…` id 直接 400 `reason:"unknown-free-voice"`**（v0.4.17 缺陷修复 D4：以前这种串会落到 inline preset 分支，把你粘进来的字符串当 `speaker` 发给上游，白烧一次厂商调用、状态码形状也错） |
 | `GET /dsh-voice-alert/sfx/list` | 内置音效目录（20 项 + 每项是否在库 `present`）+ 当前 `alertMode`/`sfxByKind`（v0.3.3） |
 | `GET /dsh-voice-alert/sfx/play?name=<key>` | 试听一个内置音效；`name` 必须是目录 key，否则 400（v0.3.3） |
 | `GET\|POST /dsh-voice-alert/settings` | 读写设置（`enabled` / `alertMode` / `sfxByKind` / 文案 / 音量等；GET 返回当前解析值，POST 落盘 config.json） |
-| `POST /dsh-voice-alert/generate` | 触发一次三条文案的语音生成（需要已配 Key 与选中音色）；返回任务句柄 |
+| `POST /dsh-voice-alert/generate` | 触发一次三条文案的语音生成；返回任务句柄。用火山音色需已配 Key，**选中的是 §4.3 免费音色时不需要任何 Key**（自动走 edge 合成，v0.4.17）。body 可选 `speakerId` 覆盖本次合成用的音色（面板从不发它，只有 API 调用方会用到）；`speakerId` 是 `free:` 开头但不在目录里 / 不像合法 edge 音色名时**直接 400 `unknown-free-voice`、一次上游调用都不发出**（v0.4.17 缺陷修复 D7 —— 以前这道闸只加在 `/voices/probe`，`/generate` 会把它当成 inline preset 真的发给厂商）；**去重指纹记录的是真正拿去合成的那个音色**（D3：以前指纹只记 `config.selectedVoiceId`，覆盖成 A 合成、指纹记的却是 B，之后换个覆盖会被判 `nothing-changed` 而留着旧音频） |
 | `GET /dsh-voice-alert/generate-status` | 查询生成进度与结果（`{state, done, total, errors}`），配合 `/generate` 使用 |
 | `GET /dsh-voice-alert/preview?kind=complete\|fail\|approval` | 试听解析后的音频（不写入日志、不计数器），用于确认文案/音色是否生效 |
 | `GET /dsh-voice-alert/audio/download?kind=<kind>&variant=loud\|origin` | 下载该条播报的 mp3（v0.4.14）。`variant` 默认 `loud`（增益版），`origin` 为未增益原件；返回 `audio/mpeg` + `Content-Disposition: attachment` |
 | `POST /dsh-voice-alert/audio/import?kind=<kind>` | 用你自己的 mp3 替换该条播报（v0.4.14）。**body 为原始 mp3 字节**（非 JSON、非 base64），上限 10 MB；落盘前自动备份旧文件到 `audio\backups\import-<ts>\`，同时写 origin 与 loud 两份并清掉对应 wav 缓存；成功后写标记文件 `audio\origin\voice-alert-<kind>-poetic.imported.json`（含 kind/bytes/importedAt/backupDir/sha256），响应体带 `marker` 字段 |
 | `POST /dsh-voice-alert/audio/import/undo?kind=<kind>` | 撤销该条导入，从导入时的备份目录还原 origin 与 loud，删除标记与 wav 缓存。返回 `{ok:true,kind,restored:[…],markerDeleted:true}`；该条没导入过返回 404 `{ok:false,reason:"no import marker"}` |
+| `GET /dsh-voice-alert/free/runtime` | 免费音色可用性检测（v0.4.17）：`{ok, python, edgeTts, pythonPath, cached?}`。**只查本机 python 与 `import edge_tts`，不测网络**；非 GET 返回 405 `reason:"use GET"`，非回环 403。缓存**正负分档**：通过结果缓 30 s（免得每次开面板都拉一个 python 子进程）、**失败只缓 5 s**（否则用户照提示 `pip install edge-tts` 装完，徽标还会顶着「缺 edge-tts」，看着像没装上）；命中缓存时多带 `cached:true` |
+| `POST /dsh-voice-alert/free/audition` | 试听一个免费音色（v0.4.17）：body `{speakerId:"free:…"}`。判序（与代码一致）：非回环 403 → 非 POST 405 `reason:"use POST"` → 音量 0 → `{ok:false,muted:true,reason:"muted"}` → 提醒方式「关闭」→ `reason:"alertMode=off"`（两个闸门都在解析 body 之前，静音时传错 id 也只回静音）→ id 不是 free 系列 400。合成失败按 502 回 `{ok:false,speakerId,error,reason}`（`edge-python-missing` / `edge-tts-not-installed` / `edge-offline` / `edge-timeout` …；兜底异常另回 500 `reason:"audition-failed: …"`）。产物缓存到 `edgeCacheDir`（默认 `<data>\edge-cache`，v0.4.17 起可配置），命中缓存不重复合成 —— 每个音色各自一份 `audition-<safeKey>.mp3` + 同名 `audition-<safeKey>.stamp.json` 戳记（`safeKey` = id 里的非法字符换成 `_`，避开 NTFS ADS），只有 id/edgeVoice/pitch/有效语速四项都没变才复用 |
 
 🔴 **DSH Desktop 上的 403 是官方设计，不是插件 bug**（2026-09-15 实证）：
 桌面壳把**所有** HTTP 路由（含插件路由）包了一层浏览器访问闸门——

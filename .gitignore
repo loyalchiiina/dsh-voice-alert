@@ -27,3 +27,6 @@ audio/
 .idea/
 Thumbs.db
 Desktop.ini
+# 本机开发备份与本机交接文档（含旧源码/旧截图/本机绝对路径，绝不进仓库）
+_backup/
+HANDOVER-*.md

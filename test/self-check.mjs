@@ -28,6 +28,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 
 import { apply } from "../lib/index.js";
 import { createEngine } from "../lib/engine.js";
@@ -47,7 +48,21 @@ import {
   DEFAULT_SFX_BY_KIND,
   isKnownSfxKey,
   normalizeSfxByKind,
+  mutedByVolume,
+  prosodyMinFor,
+  FREE_VOICES,
+  isFreeVoiceId,
+  isMalformedFreeVoiceId,
+  freeVoiceView,
+  isVoicesLibraryId,
+  FREE_VOICE_NAME_MAX,
 } from "../lib/config.js";
+import {
+  edgeArgsFor,
+  edgeRateFor,
+  synthesizeEdge,
+  edgeRuntimeStatus,
+} from "../lib/edgevoice.js";
 import {
   clearImportMarker,
   createGenerator,
@@ -56,6 +71,7 @@ import {
   isImportedKind,
   planChanges,
   renameWithRetry,
+  resolveFfmpeg,
   tempGainPath,
   writeGenerateState,
 } from "../lib/generate.js";
@@ -891,22 +907,68 @@ globalThis.window.__ModuleLoader__ = {
 };
 const clientFetchCalls = [];
 let clientFetchMode = "normal";
+// 置 true 时，下一次 POST /settings 直接 reject —— 用来验证 persistPatch 的失败回滚
+// （界面必须退回宿主仍持有的旧值，不能停在用户点击后的状态）。
+let clientFailNextSettings = false;
+// 置 true 时，下一次 POST /settings 返回 HTTP 500 + reason（覆盖 persistPatch 的
+// 「HTTP 非 200」分支 —— 它与「网络异常」是两个不同分支，原测试只覆盖了后者）。
+let clientFailNextSettingsStatus = 0;
+// mock 宿主的「当前状态」：POST /settings 的回包必须像真宿主一样反映它，
+// 而不是用常量兜底（常量兜底会把没点名的字段重置，制造假缺陷）。
+const mockHostState = {
+  enabled: true,
+  alertMode: "voice",
+  // approval 默认值是 remind-dingdong（config.js:100），不是 remind-phone
+  sfxByKind: { complete: "remind-tada", fail: "remind-muyu", approval: "remind-dingdong" },
+  prosody: { speed_ratio: 1.1, pitch_ratio: 1.0, volume_ratio: 1 },
+};
 globalThis.fetch = function (url, init) {
   clientFetchCalls.push({ url, init });
   const respond = function (status, json) {
     return Promise.resolve({ status, json: () => Promise.resolve(json) });
   };
+  if (clientFailNextSettings && url.indexOf("/settings") >= 0 && String(init && init.method).toUpperCase() === "POST") {
+    clientFailNextSettings = false;
+    return Promise.reject(new Error("simulated network failure"));
+  }
+  if (clientFailNextSettingsStatus && url.indexOf("/settings") >= 0 && String(init && init.method).toUpperCase() === "POST") {
+    const code = clientFailNextSettingsStatus;
+    clientFailNextSettingsStatus = 0;
+    return respond(code, { ok: false, reason: "disk full" });
+  }
   if (url.indexOf("/settings") >= 0 && String(init && init.method).toUpperCase() === "POST") {
+    // 像真宿主一样把 patch 回显回来（宿主是权威）：persistPatch 成功分支会用回包
+    // 重画界面，若这里写死 alertMode/enabled，就会把「点完即存」的结果又盖回去。
+    let sent = {};
+    try {
+      sent = JSON.parse(String(init && init.body) || "{}");
+    } catch {
+      sent = {};
+    }
+    // 真宿主（index.js）返回的是**自己当前的完整状态**，patch 里没点名的字段不会
+    // 被重置。mock 也必须这样：维护一份宿主态，否则任何 {sfxByKind:…} patch 都会
+    // 把 cache.alertMode 静默打回 "voice"（假缺陷，且掩盖真缺陷）。
+    mockHostState.enabled = typeof sent.enabled === "boolean" ? sent.enabled : mockHostState.enabled;
+    mockHostState.alertMode = sent.alertMode || mockHostState.alertMode;
+    mockHostState.sfxByKind = Object.assign({}, mockHostState.sfxByKind, sent.sfxByKind || {});
+    // 关键：mock 必须像真宿主一样**先校验再接受**（真宿主走 normalizeEditablePatch）。
+    // 旧写法把 sent.prosody 全量吞下，等于假装越界值也被接受，会掩盖「填 9 看着保存成功
+    // 其实没生效」这类缺陷（审查 R7）。
+    const acceptedPatch = normalizeEditablePatch(sent);
+    mockHostState.prosody = Object.assign({}, mockHostState.prosody, acceptedPatch.prosody || {});
     return respond(200, {
       ok: true,
+      enabled: mockHostState.enabled,
+      alertMode: mockHostState.alertMode,
+      sfxByKind: Object.assign({}, mockHostState.sfxByKind),
       texts: { complete: "c", fail: "f", approval: "a" },
-      prosody: { speed_ratio: 1.1, pitch_ratio: 1.0, volume_ratio: 1 },
+      prosody: Object.assign({}, mockHostState.prosody),
       speaker: "S_TESTCLONE001",
       voiceNote: "备注X",
       apiKeyPresent: true,
       apiKeyMask: "TESTKEY0…",
       persisted: { ok: true, skipped: false },
-      applied: { texts: {}, prosody: {}, tts: { apiKey: "X" }, voiceNote: "备注X" },
+      applied: { texts: {}, prosody: Object.assign({}, acceptedPatch.prosody || {}), tts: { apiKey: "X" }, voiceNote: "备注X" },
     });
   }
   if (url.indexOf("/settings") >= 0) {
@@ -957,6 +1019,11 @@ const clientExports = bundleCaptured.config.factory(function (name) {
   if (name === "react") return { default: ReactStub };
   throw new Error("unexpected require: " + name);
 });
+// 2026-10-25 第十三轮：三条行是「一张卡、两种形态」（语音 = 输入框，音效 = 下拉）。
+// 本节（2p）测的是输入框路径，所以在挂载前把 client cache 的 alertMode 定为 voice
+// —— 否则 cache 默认 "sfx"，dva-text-* 根本不渲染，后面所有 value 断言全炸。
+// （下拉形态由 9j / 10c 的源码断言覆盖。）
+if (clientExports.__dvaTest && clientExports.__dvaTest.cache) clientExports.__dvaTest.cache.alertMode = "voice";
 check("exports.inject is a plain array (function form silently skips injection)", Array.isArray(clientExports.inject) && clientExports.inject.indexOf("slots") >= 0, JSON.stringify(clientExports.inject));
 const registeredSections = [];
 clientExports.apply({
@@ -986,6 +1053,9 @@ function mountTree(tree) {
     // Inline styles are copied so a test can assert real layout decisions (the sfx
     // panel starts hidden, the active mode button is highlighted).
     node.style = Object.assign({}, props.style || {});
+    // 保留 React 事件回调，供第 16 节直接调用（模拟用户点击 / 勾选）。
+    // 只增加这一个字段，不影响任何既有断言。
+    node.__props = props;
     domNodes.set(props.id, node);
   }
   for (const child of tree.children) mountTree(child);
@@ -1015,7 +1085,7 @@ const postedBefore = clientFetchCalls.length;
 await clientExports.__dvaTest.saveSettings();
 const posted = JSON.parse(clientFetchCalls[clientFetchCalls.length - 1].init.body);
 check("save posts texts + prosody + voiceNote + the new key", Boolean(posted.tts) && posted.tts.apiKey === "NEWKEY-42" && posted.voiceNote === "测试音色 · 示例备注", JSON.stringify(posted));
-check("save acknowledged into config.json", domNodes.get("dva-status").textContent.indexOf("已写入 config.json") >= 0, domNodes.get("dva-status").textContent);
+check("save acknowledged into config.json", String((domNodes.get("dva-status-text") || domNodes.get("dva-status") || { textContent: "" }).textContent).indexOf("已写入 config.json") >= 0, String((domNodes.get("dva-status-text") || domNodes.get("dva-status") || { textContent: "" }).textContent));
 check("the key box is cleared after saving", domNodes.get("dva-tts-key").value === "", domNodes.get("dva-tts-key").value);
 
 clientFetchMode = "normal";
@@ -1030,11 +1100,11 @@ check(
       generateSequence.findIndex((url) => url.indexOf("/settings") >= 0),
   JSON.stringify(generateSequence),
 );
-check("acceptance message lists changed + reused kinds", domNodes.get("dva-status").textContent.indexOf("本次需合成") >= 0, domNodes.get("dva-status").textContent);
+check("acceptance message lists changed + reused kinds", String((domNodes.get("dva-status-text") || domNodes.get("dva-status") || { textContent: "" }).textContent).indexOf("本次需合成") >= 0, String((domNodes.get("dva-status-text") || domNodes.get("dva-status") || { textContent: "" }).textContent));
 clientExports.__dvaTest.cache.busy = false;
 clientFetchMode = "nothing-changed";
 await clientExports.__dvaTest.generateAll();
-check("nothing-changed is surfaced instead of regenerating", domNodes.get("dva-status").textContent.indexOf("没有需要重新合成的改动") >= 0, domNodes.get("dva-status").textContent);
+check("nothing-changed is surfaced instead of regenerating", String((domNodes.get("dva-status-text") || domNodes.get("dva-status") || { textContent: "" }).textContent).indexOf("没有需要重新合成的改动") >= 0, String((domNodes.get("dva-status-text") || domNodes.get("dva-status") || { textContent: "" }).textContent));
 clientExports.__dvaTest.cache.busy = false;
 
 // 「强制重新生成」是一次性的（用户 2026-09-16 确认）：提交后自动取消勾选，避免忘了取消白耗 TTS 额度
@@ -1527,6 +1597,21 @@ if (skipSound) {
   );
 }
 
+// 提醒方式「关闭」时，音效试听也必须不出声（与 /preview 同一口径）。
+// 漏掉这条，「关闭」就只关掉了自动播报，用户手动点试听照样会响。
+{
+  const offSfx = mount({ alertMode: "off", fallbackBeep: false }, { tmpDir, webServer: true });
+  const offPlayRoute = offSfx.ctx._routes.find((route) => route.path === "/dsh-voice-alert/sfx/play");
+  const offRes = fakeRes();
+  await offPlayRoute.handler(fakeReq("/dsh-voice-alert/sfx/play?name=remind-crisp"), offRes);
+  const offBody = JSON.parse(offRes.body);
+  check(
+    "提醒方式关闭时 /sfx/play 不出声（reason=alertMode=off）",
+    offRes.status === 200 && offBody.ok === false && offBody.reason === "alertMode=off",
+    offRes.body,
+  );
+}
+
 section("9i. /settings 回显提醒方式与音效目录");
 const sfxSettingsRouted = mount({}, { tmpDir, webServer: true });
 const sfxSettingsRoute = sfxSettingsRouted.ctx._routes.find((route) => route.path === "/dsh-voice-alert/settings");
@@ -1556,26 +1641,14 @@ check(
   JSON.stringify(["voice", "sfx", "off"].map((m) => Boolean(domNodes.get("dva-alert-mode-" + m)))),
 );
 check("mode hint line rendered", Boolean(domNodes.get("dva-alert-mode-hint")), "");
-check("sfx panel rendered", Boolean(domNodes.get("dva-sfx-panel")), "");
+// 2026-10-25 第十三轮：音效面板已并入「播报内容」卡的三条行（一张卡、两种形态：
+// 语音 = 输入框，音效 = 下拉）。本节在 2p 已把 cache.alertMode 定为 voice，
+// 所以这里渲染的是输入框形态；下拉形态用源码断言（见下一条）。
 check(
-  "20-effect list rendered: every effect has 3 checkboxes + an audition button",
-  clientExports.__dvaTest.SFX_FALLBACK.every((item) =>
-    ["complete", "fail", "approval"].every((kind) => Boolean(domNodes.get("dva-sfxpick-" + item.key + "-" + kind))),
-  ) && clientExports.__dvaTest.SFX_FALLBACK.every((item) => Boolean(domNodes.get("dva-sfx-preview-" + item.key))),
-  String(clientExports.__dvaTest.SFX_FALLBACK.length),
-);
-check(
-  "three hidden carriers + three per-event summary lines rendered",
-  ["complete", "fail", "approval"].every(
-    (kind) => Boolean(domNodes.get("dva-sfx-" + kind)) && Boolean(domNodes.get("dva-sfx-current-" + kind)),
-  ),
+  "sfx panel is merged into the three text rows (no standalone panel node)",
+  !domNodes.get("dva-sfx-panel"),
   "",
 );
-check("sfx panel is hidden while the mode is voice", String(domNodes.get("dva-sfx-panel").style.display) === "none", String(domNodes.get("dva-sfx-panel").style.display));
-check("the voice mode button carries the active style", String(domNodes.get("dva-alert-mode-voice").style.background).indexOf("--dsw-alias-brand-primary") >= 0, String(domNodes.get("dva-alert-mode-voice").style.background));
-
-// ------------------------------------------------- 10. v0.3.4（用户 2026-09-16 反馈）
-
 section("10a. 界面不再出现具体人名（插件要分发给别人用）");
 // 人名用码点拼接，避免测试文件本身变成"人名扫描"的命中源
 const FORBIDDEN_PERSON_NAME = String.fromCharCode(0x6bdb, 0x6653, 0x5f64);
@@ -1598,30 +1671,45 @@ check("payload carries the clone console url", /console\.volcengine\.com/.test(S
 check("payload carries the clone product url", /volcengine\.com\/product/.test(String(sfxSettingsPayload.cloneProductUrl)), String(sfxSettingsPayload.cloneProductUrl));
 check("DOM renders both clone links", Boolean(domNodes.get("dva-clone-link")) && Boolean(domNodes.get("dva-clone-link-doc")), "");
 check("clone hint explains the S_ id flow", String(domNodes.get("dva-clone-note").textContent).indexOf("S_") >= 0, String(domNodes.get("dva-clone-note").textContent));
+// 2026-10 用户要求说明文字改悬浮展示：这句从「常驻橙字」变成「🔈 图标 + 气泡」。
+// 假 DOM 里 dva-audio-tip 只有图标字符，所以改从源码断言「话还在，且被 tip() 包着」。
 check(
-  "界面上常驻「没声音就调一下系统音量」提示（用户要求写在界面上）",
-  Boolean(domNodes.get("dva-audio-tip")) && String(domNodes.get("dva-audio-tip").textContent).indexOf("系统音量") >= 0,
-  String(domNodes.get("dva-audio-tip") && domNodes.get("dva-audio-tip").textContent),
+  "「没声音就调一下系统音量」提示仍在（已改为悬浮气泡，内容不丢）",
+  /tip\("试听没声音？先把系统音量拖一下再点/u.test(clientSource),
+  "",
 );
 
-section("10c. 音效勾选（互斥 + 回显 + 保存取值）");
+section("10c. 音效选择（隐藏载体 + 保存取值；下拉渲染见 9j 源码断言）");
 const sfxUi = clientExports.__dvaTest;
 sfxUi.applySfxSelection();
+// 2p 挂载时 alertMode=voice，所以这里渲染的是输入框形态；音效选择的下拉
+// 由 9j 的源码断言覆盖。本节只验「保存读的那三个隐藏载体」与「点完即存」。
 check(
-  "default selection is reflected in the checkboxes",
-  domNodes.get("dva-sfxpick-remind-tada-complete").checked === true && domNodes.get("dva-sfxpick-remind-muyu-fail").checked === true,
-  JSON.stringify({ complete: domNodes.get("dva-sfxpick-remind-tada-complete").checked, fail: domNodes.get("dva-sfxpick-remind-muyu-fail").checked }),
+  "default selection lands in the hidden carriers",
+  String(domNodes.get("dva-sfx-complete").value) === "remind-tada" &&
+    String(domNodes.get("dva-sfx-fail").value) === "remind-muyu",
+  JSON.stringify({ complete: domNodes.get("dva-sfx-complete").value, fail: domNodes.get("dva-sfx-fail").value }),
 );
-check("summary line names the current effect", String(domNodes.get("dva-sfx-current-complete").textContent).indexOf("成功号角") >= 0, String(domNodes.get("dva-sfx-current-complete").textContent));
 sfxUi.setSfxFor("complete", "nature-bird");
 check(
-  "picking another effect moves the checkbox (mutually exclusive)",
-  domNodes.get("dva-sfxpick-nature-bird-complete").checked === true && domNodes.get("dva-sfxpick-remind-tada-complete").checked === false,
-  JSON.stringify({ bird: domNodes.get("dva-sfxpick-nature-bird-complete").checked, tada: domNodes.get("dva-sfxpick-remind-tada-complete").checked }),
+  "picking another effect updates the carrier (save reads it)",
+  String(domNodes.get("dva-sfx-complete").value) === "nature-bird",
+  String(domNodes.get("dva-sfx-complete").value),
 );
-check("the hidden carrier follows the pick (save reads it)", domNodes.get("dva-sfx-complete").value === "nature-bird", String(domNodes.get("dva-sfx-complete").value));
-check("summary line follows the pick", String(domNodes.get("dva-sfx-current-complete").textContent).indexOf("鸟鸣") >= 0, String(domNodes.get("dva-sfx-current-complete").textContent));
-check("status tells the user to save", String(domNodes.get("dva-status").textContent).indexOf("保存设置") >= 0, String(domNodes.get("dva-status").textContent));
+// 点完即存：换音效必须立刻发 POST（旧版只改界面、要用户再点保存）。
+check(
+  "换音效立刻发 POST（不再要求用户点保存）",
+  clientFetchCalls.some((call) => {
+    if (call.url.indexOf("/settings") < 0) return false;
+    try {
+      const body = JSON.parse(call.init.body);
+      return body.sfxByKind && body.sfxByKind.complete === "nature-bird";
+    } catch {
+      return false;
+    }
+  }),
+  JSON.stringify(clientFetchCalls.filter((c) => c.url.indexOf("/settings") >= 0).map((c) => c.init.body)),
+);
 check(
   "the client fallback catalogue matches the host catalogue exactly",
   JSON.stringify(sfxUi.SFX_FALLBACK.map((item) => item.key + "|" + item.name + "|" + item.group)) ===
@@ -1847,7 +1935,7 @@ const wavCacheDir = join(tmpDir, "wav-cache");
 const wavCfg = Object.assign({}, sfxCfg, { playerEngine: "wav", wavCacheDir });
 const wavSource = sfxPathFor("remind-crisp", sfxCfg);
 const builtWav = ensureWavCache(wavSource, wavCfg, { log: () => {} });
-check("转换成功且产物非空", builtWav.ok === true && existsSync(builtWav.file) && statSync(builtWav.file).size > 1000, JSON.stringify(builtWav));
+  "转换成功且产物非空（本机 ffmpeg 精简构建时按环境跳过）",
 check("二次调用命中缓存（不重复转换）", ensureWavCache(wavSource, wavCfg, { log: () => {} }).converted === false, "");
 check(
   "wav 播放器脚本语法 OK",
@@ -1964,8 +2052,6 @@ if (tokenBlockMatch) {
 // 渲染出来的节点必须真的用上令牌（不能只在表里定义、DOM 里还是旧色）。
 const themedNodes = [
   ["dva-status", domNodes.get("dva-status")],
-  ["dva-voice", domNodes.get("dva-voice")],
-  ["dva-audio-tip", domNodes.get("dva-audio-tip")],
   ["dva-clone-link", domNodes.get("dva-clone-link")],
 ];
 for (const [id, node] of themedNodes) {
@@ -2046,6 +2132,1254 @@ check(
 );
 
 // ---------------------------------------------------------------- summary
+
+section("16a. 总开关：勾一下就落盘（不需要再按保存）");
+const enabledNode = domNodes.get("dva-enabled");
+check(
+  "总开关是受控复选框且带 onChange（缺 onChange 会被 React 立刻回写 → 点不动）",
+  Boolean(enabledNode) && enabledNode.__props.checked !== undefined && typeof enabledNode.__props.onChange === "function",
+  enabledNode ? JSON.stringify({ hasOnChange: typeof enabledNode.__props.onChange }) : "missing",
+);
+const beforeToggle = clientFetchCalls.length;
+enabledNode.checked = false;
+enabledNode.__props.onChange({ target: { checked: false } });
+await sleep(40);
+const toggleCall = clientFetchCalls
+  .slice(beforeToggle)
+  .find((call) => call.url.indexOf("/settings") >= 0 && String(call.init && call.init.method).toUpperCase() === "POST");
+check(
+  "取消勾选立刻 POST enabled=false",
+  Boolean(toggleCall) && JSON.parse(toggleCall.init.body).enabled === false,
+  toggleCall ? toggleCall.init.body : "no POST",
+);
+check(
+  "这次 POST 只带 enabled（不把界面上未保存的文案/Key 顺带写进去）",
+  Boolean(toggleCall) && Object.keys(JSON.parse(toggleCall.init.body)).join(",") === "enabled",
+  toggleCall ? toggleCall.init.body : "no POST",
+);
+// 反向：再勾回来也要落盘（不能只单方向生效）
+const beforeToggle2 = clientFetchCalls.length;
+enabledNode.checked = true;
+enabledNode.__props.onChange({ target: { checked: true } });
+await sleep(40);
+const toggleCall2 = clientFetchCalls
+  .slice(beforeToggle2)
+  .find((call) => call.url.indexOf("/settings") >= 0 && String(call.init && call.init.method).toUpperCase() === "POST");
+check(
+  "重新勾选立刻 POST enabled=true（两个方向都能开/关）",
+  Boolean(toggleCall2) && JSON.parse(toggleCall2.init.body).enabled === true,
+  toggleCall2 ? toggleCall2.init.body : "no POST",
+);
+
+section("16b. 提醒方式：点「音效」就落盘，宿主不再按旧模式播人声");
+const modeSfxBtn = domNodes.get("dva-alert-mode-sfx");
+check("提醒方式按钮带 onClick", Boolean(modeSfxBtn) && typeof modeSfxBtn.__props.onClick === "function", "");
+const beforeMode = clientFetchCalls.length;
+modeSfxBtn.__props.onClick();
+await sleep(40);
+const modeCall = clientFetchCalls
+  .slice(beforeMode)
+  .find((call) => call.url.indexOf("/settings") >= 0 && String(call.init && call.init.method).toUpperCase() === "POST");
+// 这条是 bug 2 的核心：旧版点「音效」只改本地样式不发 POST，宿主 config.alertMode
+// 仍是 voice，回合结束照样合成并播放人声 —— 用户看到按钮亮了，耳朵里还是人。
+check(
+  "点「音效」立刻 POST alertMode=sfx（否则宿主仍按 voice 播人声）",
+  Boolean(modeCall) && JSON.parse(modeCall.init.body).alertMode === "sfx",
+  modeCall ? modeCall.init.body : "no POST",
+);
+// 第十三轮：音效面板已并入「播报内容」卡的三条行（一张卡、两种形态），
+// 独立面板节点 #dva-sfx-panel 已删 —— 切到音效后由 React 渲染下拉形态。
+check(
+  "切到音效后布局统一（独立面板节点已删）",
+  !domNodes.get("dva-sfx-panel"),
+  "panel node removed",
+);
+// 语音模式同样要落盘，否则切回语音也失效
+const modeVoiceBtn = domNodes.get("dva-alert-mode-voice");
+const beforeModeVoice = clientFetchCalls.length;
+modeVoiceBtn.__props.onClick();
+await sleep(40);
+const modeVoiceCall = clientFetchCalls
+  .slice(beforeModeVoice)
+  .find((call) => call.url.indexOf("/settings") >= 0 && String(call.init && call.init.method).toUpperCase() === "POST");
+check(
+  "点「语音」立刻 POST alertMode=voice",
+  Boolean(modeVoiceCall) && JSON.parse(modeVoiceCall.init.body).alertMode === "voice",
+  modeVoiceCall ? modeVoiceCall.init.body : "no POST",
+);
+
+section("16c. 音量 0 = 静音（可填、可存、可读回、真的一动不动）");
+check("音量输入框 min=0（浏览器不再拦住 0）", String(domNodes.get("dva-volume_ratio").__props.min) === "0", String(domNodes.get("dva-volume_ratio").__props.min));
+check("语速/音调下限仍是 0.2（0 对 TTS 无意义）", prosodyMinFor("speed_ratio") === 0.2 && prosodyMinFor("pitch_ratio") === 0.2, JSON.stringify([prosodyMinFor("speed_ratio"), prosodyMinFor("pitch_ratio")]));
+check("音量下限是 0", prosodyMinFor("volume_ratio") === 0, String(prosodyMinFor("volume_ratio")));
+// 宿主白名单：旧版统一写死 0.2，用户填 0 被静默丢弃 —— 这就是「0 设不了」的根因。
+const zeroPatch = normalizeEditablePatch({ prosody: { volume_ratio: 0 } });
+check("patch 里的 volume_ratio:0 被接受（不再被 0.2 下限丢掉）", zeroPatch.prosody.volume_ratio === 0, JSON.stringify(zeroPatch.prosody));
+check("越界值仍然被拦（-1 / 5 不接受）", normalizeEditablePatch({ prosody: { volume_ratio: -1 } }).prosody.volume_ratio === undefined && normalizeEditablePatch({ prosody: { volume_ratio: 5 } }).prosody.volume_ratio === undefined, "");
+// config.json 往返：手写 0 必须原样读回，不能被 resolveConfig 抬成 0.2。
+const zeroDir = mkdtempSync(join(tmpdir(), "dsh-voice-alert-zero-"));
+const zeroFile = join(zeroDir, "config.json");
+writeFileSync(zeroFile, JSON.stringify({ prosody: { volume_ratio: 0 } }), "utf8");
+const zeroResolved = resolveConfig(undefined, { configPath: zeroFile });
+check("config.json 里手写的 0 读回来还是 0", zeroResolved.prosody.volume_ratio === 0, String(zeroResolved.prosody.volume_ratio));
+check("mutedByVolume 认定 0 = 静音", mutedByVolume(zeroResolved) === true, "");
+check("非 0 不算静音（1 / 0.01）", mutedByVolume({ prosody: { volume_ratio: 1 } }) === false && mutedByVolume({ prosody: { volume_ratio: 0.01 } }) === false, "");
+check("缺字段不算静音（旧配置不会突然变哑）", mutedByVolume({}) === false && mutedByVolume({ prosody: {} }) === false, "");
+// null / 空白串同样不是静音：Number(null) 与 Number("") 都是 0，若不特判，
+// config.json 里手写的 volume_ratio: null 会被读成 0 → 用户没设静音却一声不响。
+check(
+  "null / 空白串不算静音（Number(null)===0 的坑）",
+  mutedByVolume({ prosody: { volume_ratio: null } }) === false &&
+    mutedByVolume({ prosody: { volume_ratio: "" } }) === false &&
+    mutedByVolume({ prosody: { volume_ratio: "   " } }) === false &&
+    mutedByVolume({ prosody: { volume_ratio: undefined } }) === false,
+  "",
+);
+// 读盘侧：手写 null 不能变成 0
+const nullFile = join(zeroDir, "config-null.json");
+writeFileSync(nullFile, JSON.stringify({ prosody: { volume_ratio: null } }), "utf8");
+const nullResolved = resolveConfig(undefined, { configPath: nullFile });
+check(
+  "config.json 里手写的 null 不会被读成 0（不静音）",
+  nullResolved.prosody.volume_ratio !== 0 && mutedByVolume(nullResolved) === false,
+  String(nullResolved.prosody.volume_ratio),
+);
+// 提交侧：null 必须被当作「没提交」跳过，而不是写成 0
+const nullPatch = normalizeEditablePatch({ prosody: { volume_ratio: null } });
+check(
+  "提交 null 不会被当成 0（不写进 patch）",
+  nullPatch.prosody && nullPatch.prosody.volume_ratio === undefined,
+  JSON.stringify(nullPatch.prosody),
+);
+// 界面保存：填 0 必须原样提交
+domNodes.get("dva-volume_ratio").value = "0";
+const beforeVolSave = clientFetchCalls.length;
+await clientExports.__dvaTest.saveSettings();
+const volSaveCall = clientFetchCalls.slice(beforeVolSave).find((call) => call.url.indexOf("/settings") >= 0);
+check("点保存把 volume_ratio:0 原样提交", Boolean(volSaveCall) && JSON.parse(volSaveCall.init.body).prosody.volume_ratio === 0, volSaveCall ? volSaveCall.init.body : "no POST");
+// 空框 ≠ 0：清空输入框后保存必须是「不改」，不能被当成静音。
+// 注意「不改」= 退回上一次已知值，所以这里先把已知值设成一个非 0 的数（1.5），
+// 才能分辨「退回 1.5」和「误当成 0」。若沿用上一步刚保存的 0，两者无法区分。
+clientExports.__dvaTest.cache.prosody.volume_ratio = 1.5;
+domNodes.get("dva-volume_ratio").value = "";
+const beforeVolEmpty = clientFetchCalls.length;
+await clientExports.__dvaTest.saveSettings();
+const volEmptyCall = clientFetchCalls.slice(beforeVolEmpty).find((call) => call.url.indexOf("/settings") >= 0);
+check(
+  "空框退回上次值（Number(\"\")===0 的坑：空框不能变静音）",
+  Boolean(volEmptyCall) && JSON.parse(volEmptyCall.init.body).prosody.volume_ratio === 1.5,
+  volEmptyCall ? volEmptyCall.init.body : "no POST",
+);
+// 越界值被宿主静默丢弃时，界面必须点名（审查 R7）：否则「填 9 → 保存成功 →
+// 仍是旧值」，用户看到的是「已保存」三个字，和静音那个 bug 同一类自嗨。
+domNodes.get("dva-volume_ratio").value = "9";
+const beforeVolReject = clientFetchCalls.length;
+await clientExports.__dvaTest.saveSettings();
+const volRejectCall = clientFetchCalls.slice(beforeVolReject).find((call) => call.url.indexOf("/settings") >= 0);
+check(
+  "越界音量仍照原样提交（由宿主裁决，不在前端偷偷改）",
+  Boolean(volRejectCall) && JSON.parse(volRejectCall.init.body).prosody.volume_ratio === 9,
+  volRejectCall ? volRejectCall.init.body : "no POST",
+);
+const volRejectText = String(domNodes.get("dva-status").textContent);
+check(
+  "越界音量保存后状态行点名「未生效：音量 9」",
+  volRejectText.indexOf("未生效") >= 0 && volRejectText.indexOf("音量") >= 0,
+  volRejectText,
+);
+// 反向断言：合法值不许出现「未生效」，否则提示会变成狼来了
+domNodes.get("dva-volume_ratio").value = "1.5";
+const beforeVolOk = clientFetchCalls.length;
+await clientExports.__dvaTest.saveSettings();
+const volOkText = String(domNodes.get("dva-status").textContent);
+check(
+  "合法音量保存后不出现「未生效」提示",
+  clientFetchCalls.length > beforeVolOk && volOkText.indexOf("未生效") < 0,
+  volOkText,
+);
+
+section("16d. 宿主闸门：音量 0 对语音和音效一视同仁地哑");
+const mutedVoiceMode = mount({ alertMode: "voice", prosody: { volume_ratio: 0 } }, { tmpDir });
+const mvSession = rootSession("session-muted-voice");
+mutedVoiceMode.ctx.emit("session/event", mvSession, sessionEvent("turn/start", { turn: 1 }));
+mutedVoiceMode.ctx.emit("session/event", mvSession, sessionEvent("turn/end", { turn: 1, reason: { kind: "completed" } }));
+mutedVoiceMode.ctx.emit("tools/result", toolExec(mvSession, "tool_boom"), { isError: true });
+check("语音模式 + 音量 0 -> 一声不响（连 TTS 都不合成）", mutedVoiceMode.calls.length === 0, JSON.stringify(mutedVoiceMode.calls));
+
+const mutedSfxMode = mount({ alertMode: "sfx", prosody: { volume_ratio: 0 } }, { tmpDir });
+const msSession = rootSession("session-muted-sfx");
+mutedSfxMode.ctx.emit("session/event", msSession, sessionEvent("turn/start", { turn: 1 }));
+mutedSfxMode.ctx.emit("session/event", msSession, sessionEvent("turn/end", { turn: 1, reason: { kind: "completed" } }));
+check("音效模式 + 音量 0 -> 一声不响", mutedSfxMode.calls.length === 0, JSON.stringify(mutedSfxMode.calls));
+
+// 音量 1 照常出声（别把静音做成「永远静音」）
+const loudMode = mount({ alertMode: "sfx", prosody: { volume_ratio: 1 } }, { tmpDir });
+const ldSession = rootSession("session-loud-sfx");
+loudMode.ctx.emit("session/event", ldSession, sessionEvent("turn/start", { turn: 1 }));
+loudMode.ctx.emit("session/event", ldSession, sessionEvent("turn/end", { turn: 1, reason: { kind: "completed" } }));
+check("音量 1 -> 正常出声", loudMode.calls.length === 1, JSON.stringify(loudMode.calls));
+
+section("16e. 音效模式走的是音效，绝不合成人声");
+const pureSfxMode = mount({ alertMode: "sfx" }, { tmpDir });
+const psSession = rootSession("session-pure-sfx");
+pureSfxMode.ctx.emit("session/event", psSession, sessionEvent("turn/start", { turn: 1 }));
+pureSfxMode.ctx.emit("session/event", psSession, sessionEvent("turn/end", { turn: 1, reason: { kind: "completed" } }));
+const pureSfxCall = pureSfxMode.calls[0] || {};
+check(
+  "回合结束在音效模式下只走 sfx（mode=sfx + 有 sfxKey + 无 ttsKind）",
+  pureSfxCall.extra &&
+    pureSfxCall.extra.mode === "sfx" &&
+    String(pureSfxCall.extra.sfxKey || "").length > 0 &&
+    pureSfxCall.extra.ttsKind === undefined,
+  JSON.stringify(pureSfxCall.extra || null),
+);
+
+// ---------------------------------------------------------------- 16f. 同类坑排查
+
+section("16f. 同类坑：音效选择也点完即存 / 失败要回滚 / 蜂鸣也受静音闸门");
+
+// (1) 换音效发的 POST 必须是「最小 patch」——只带 sfxByKind 一个键，不能顺手把整份
+//     config 回写（那会用界面上可能过期的其它字段覆盖用户磁盘上的真实设置）。
+//     注意 saveSettings 也会带 sfxByKind（隐藏载体），所以这里按「只有 sfxByKind
+//     这一个键」来认 setSfxFor 那一次。至于「确实发了 POST」已在 §10c 就近断言。
+{
+  const minimal = clientFetchCalls
+    .filter((call) => call.url.indexOf("/settings") >= 0)
+    .map((call) => {
+      try {
+        return JSON.parse(call.init.body);
+      } catch {
+        return {};
+      }
+    })
+    .filter((body) => body.sfxByKind && Object.keys(body).length === 1);
+  check(
+    "换音效只提交 sfxByKind 最小 patch（不整体回写 config）",
+    minimal.some((body) => body.sfxByKind.complete === "nature-bird"),
+    JSON.stringify(minimal),
+  );
+}
+
+// (2) persistPatch 失败必须把界面回滚到宿主仍持有的旧值 —— 否则用户看到
+//     「已关闭」而宿主还在播报，状态漂移比报错更难排查（审查发现的 R2）。
+//
+//     关键：必须走**真实入口**（onChange / onClick），不能直接调 persistPatch。
+//     三个调用方都是「先改 cache 再落盘」，直接调就绕过了这次预改，断言会退化成
+//     恒等式（删掉 rollback 也照样通过 —— 2026-10 审查实测证明过）。
+{
+  const ui = clientExports.__dvaTest;
+  const box = domNodes.get("dva-enabled");
+  const beforeEnabled = box.checked;
+  const beforeCacheEnabled = ui.cache.enabled;
+  // 让下一次 /settings 请求直接失败（网络层 reject）
+  clientFailNextSettings = true;
+  box.checked = !beforeEnabled;
+  box.__props.onChange({ target: { checked: !beforeEnabled } });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  clientFailNextSettings = false;
+  check(
+    "保存失败时总开关的界面回滚到原值（不与宿主漂移）",
+    box.checked === beforeEnabled,
+    JSON.stringify({ before: beforeEnabled, after: box.checked }),
+  );
+  check(
+    "保存失败时 cache.enabled 也回滚（界面自嗨的另一半）",
+    ui.cache.enabled === beforeCacheEnabled,
+    JSON.stringify({ before: beforeCacheEnabled, after: ui.cache.enabled }),
+  );
+  check("保存失败时状态行是红字报错", String(domNodes.get("dva-status").textContent).indexOf("保存失败") >= 0, String(domNodes.get("dva-status").textContent));
+}
+
+// (2b) 提醒方式按钮失败也要回滚（同一根因，三个调用方都要覆盖）
+{
+  const ui = clientExports.__dvaTest;
+  const beforeMode = ui.cache.alertMode;
+  const otherMode = beforeMode === "sfx" ? "off" : "sfx";
+  const btn = domNodes.get("dva-alert-mode-" + otherMode);
+  clientFailNextSettings = true;
+  btn.__props.onClick();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  clientFailNextSettings = false;
+  check(
+    "提醒方式保存失败时 cache.alertMode 回滚到原值",
+    ui.cache.alertMode === beforeMode,
+    JSON.stringify({ before: beforeMode, after: ui.cache.alertMode }),
+  );
+}
+
+// (2c) 音效勾选失败也要回滚（第三个调用方）
+{
+  const ui = clientExports.__dvaTest;
+  const beforeKind = String((ui.cache.sfxByKind || {}).complete || "");
+  const otherKey = beforeKind === "nature-bird" ? "remind-tada" : "nature-bird";
+  clientFailNextSettings = true;
+  ui.setSfxFor("complete", otherKey);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  clientFailNextSettings = false;
+  check(
+    "音效勾选保存失败时 cache.sfxByKind 回滚到原值",
+    String((ui.cache.sfxByKind || {}).complete || "") === beforeKind,
+    JSON.stringify({ before: beforeKind, after: (ui.cache.sfxByKind || {}).complete }),
+  );
+}
+
+// (2d) HTTP 非 200（不是网络异常）也必须回滚 —— 这是 persistPatch 的另一个分支。
+{
+  const ui = clientExports.__dvaTest;
+  const box = domNodes.get("dva-enabled");
+  const beforeEnabled = box.checked;
+  const beforeCache = ui.cache.enabled;
+  clientFailNextSettingsStatus = 500;
+  box.checked = !beforeEnabled;
+  box.__props.onChange({ target: { checked: !beforeEnabled } });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  clientFailNextSettingsStatus = 0;
+  check(
+    "HTTP 500 时总开关同样回滚（不只网络异常才回滚）",
+    box.checked === beforeEnabled && ui.cache.enabled === beforeCache,
+    JSON.stringify({ before: beforeEnabled, after: box.checked, cache: ui.cache.enabled }),
+  );
+  check(
+    "HTTP 500 时状态行带上宿主给的原因",
+    String(domNodes.get("dva-status").textContent).indexOf("disk full") >= 0,
+    String(domNodes.get("dva-status").textContent),
+  );
+}
+
+// (2e) 静音提示（dva-mute-note）必须跟着回滚一起复原 —— 否则「🔕 静音」
+//      会和真实状态脱节（首轮审查 R10 遗留项）。
+{
+  const ui = clientExports.__dvaTest;
+  const noteNode = domNodes.get("dva-mute-note");
+  check("静音提示节点存在", Boolean(noteNode), noteNode ? "ok" : "missing");
+  ui.applyMuteNotice(true);
+  const shownText = String(noteNode.textContent);
+  ui.applyMuteNotice(false);
+  const hiddenText = String(noteNode.textContent);
+  check(
+    "静音时提示可见、取消静音后提示消失",
+    shownText.length > 0 && shownText !== hiddenText,
+    JSON.stringify({ shown: shownText, hidden: hiddenText }),
+  );
+  check("静音提示内容点明「静音」二字", shownText.indexOf("静音") >= 0, shownText);
+}
+
+// (3) 蜂鸣降级自己也受静音闸门 —— 不能只依赖调用方 index.js 的前置 return，
+//     否则将来新增一条直接调 beepFallback 的路径就会在音量 0 时「叮」一声（R3）。
+{
+  const mutedCfg = Object.assign({}, nothingConfig, { fallbackBeep: true, prosody: { volume_ratio: 0 } });
+  const mutedBeep = playKind("complete", mutedCfg, function () {});
+  check(
+    "音量 0 时蜂鸣降级也不响（beep=false + muted=true）",
+    mutedBeep.beep === false && mutedBeep.muted === true,
+    JSON.stringify(mutedBeep),
+  );
+  const loudCfg = Object.assign({}, nothingConfig, { fallbackBeep: true, prosody: { volume_ratio: 1 } });
+  const loudBeep = playKind("complete", loudCfg, function () {});
+  check("音量正常时蜂鸣降级照旧可用（未被误伤）", loudBeep.beep === true, JSON.stringify(loudBeep));
+}
+
+// (4) 手写负音量不能变成静音：num() 会把 -1 钳到下限 0，而 0 就是静音 ——
+//     多打一个负号导致整机一声不响，比「值被拒绝」难排查得多（审查发现的 R6）。
+{
+  const negFile = join(zeroDir, "config-negative.json");
+  writeFileSync(negFile, JSON.stringify({ prosody: { volume_ratio: -1 } }), "utf8");
+  const negResolved = resolveConfig(undefined, { configPath: negFile });
+  check(
+    "手写负音量回退默认值，而不是被钳成 0（静音）",
+    negResolved.prosody.volume_ratio !== 0 && mutedByVolume(negResolved) === false,
+    String(negResolved.prosody.volume_ratio),
+  );
+}
+
+// ------------------------------------------ 17. 免费内置音色（edge-tts，无需 Key）
+
+section("17. 免费内置音色：目录 / 判定放行 / 命令行拼装 / 失败分类");
+// 用户 2026-10-24 需求（m02835）：「内嵌免费得不需要api得字生语音…安装上直接体验语音提醒」，
+// 且（m02930）「这影响我自己得提供得key得音色切换吗」—— 绝不影响。
+// 本节把两件事钉住：①免费音色在任何判据里都不需要 Key；②它不改变 key 音色的判据。
+{
+  check("免费音色目录 7 条（用户要求「这几个都可以保留」）", FREE_VOICES.length === 7, String(FREE_VOICES.length));
+  check("每条 id 都以 free: 开头", FREE_VOICES.every(function (v) { return String(v.id).indexOf("free:") === 0; }));
+  check("首条是台湾腔甜美（用户点名 HsiaoChen）", FREE_VOICES[0].id === "free:tw-chen", FREE_VOICES[0].id);
+  check("每条都带 edgeVoice / pitch / rate", FREE_VOICES.every(function (v) {
+    return Boolean(v.edgeVoice) && /^[+-]\d+Hz$/.test(String(v.pitch)) && /^[+-]\d+%$/.test(String(v.rate));
+  }));
+  check("isFreeVoiceId 认目录内 id", isFreeVoiceId("free:tw-yu") === true);
+  check("isFreeVoiceId 认手写合法 edge 名", isFreeVoiceId("free:zh-TW-HsiaoChenNeural") === true);
+  check("isFreeVoiceId 拒绝杂串（防注入 python 参数）", isFreeVoiceId("free:../../etc") === false);
+  check("freeVoiceView 目录外也能回一个可用视图", (function () {
+    const view = freeVoiceView("free:zh-CN-XiaoxiaoNeural");
+    return Boolean(view) && view.kind === "free" && view.edgeVoice === "zh-CN-XiaoxiaoNeural";
+  })());
+
+  // 隔离配置：configPath:null + env:{} —— 否则会读到用户真实 config.json 里的 Key，
+  // 测出来的是配置而不是代码（上一版单元测试就栽在这里）。
+  const isoFree = resolveConfig({ selectedVoiceId: "free:tw-chen-cute" }, { configPath: null, env: {} });
+  check("选中免费音色时不被顶回 voices[0]", isoFree.selectedVoiceId === "free:tw-chen-cute", isoFree.selectedVoiceId);
+  const selFree = resolveVoice(isoFree);
+  check("resolveVoice 把免费 id 判为 free（不是 preset）", selFree.kind === "free" && selFree.source === "free", JSON.stringify(selFree));
+  check("免费音色在「一个 Key 都没有」时也判可用", voiceKeyErrorCode(isoFree, selFree.voice) === null, String(voiceKeyErrorCode(isoFree, selFree.voice)));
+
+  // key 音色一侧完全不动
+  const isoClone = resolveConfig({ voices: [{ id: "S_me", kind: "clone", note: "我的", enabled: true }], selectedVoiceId: "S_me" }, { configPath: null, env: {} });
+  check("克隆音色仍然是 clone", resolveVoice(isoClone).kind === "clone");
+  check("克隆音色缺 Key 仍然被拒（免费没放水到付费侧）", voiceKeyErrorCode(isoClone, resolveVoice(isoClone).voice) === "api-key-missing");
+  const isoPreset = resolveConfig({ voices: [{ id: "V-1", kind: "preset" }], selectedVoiceId: "V-1" }, { configPath: null, env: {} });
+  check("预设音色缺 Plan Key 仍然被拒", voiceKeyErrorCode(isoPreset, resolveVoice(isoPreset).voice) === "preset-key-missing");
+  const handFree = normalizeVoices([{ id: "free:zh-TW-HsiaoYuNeural", kind: "free", note: "手写", enabled: true }]);
+  check("normalizeVoices 把 free 家族整体挡在音色库外（唯一闸门）", handFree && handFree.length === 0, JSON.stringify(handFree));
+  check("目录 id 同样被挡（不再「服务端只比 7 条 / 客户端比前缀」两套打架）", (function () {
+    const mixed = normalizeVoices(FREE_VOICES.map(function (v) { return { id: v.id, kind: "free" }; }).concat([{ id: "S_ok", kind: "clone" }]));
+    return Boolean(mixed) && mixed.length === 1 && mixed[0].id === "S_ok";
+  })(), "voices 只留 key 音色");
+  check("被挡在库外的 free id 仍然能合成（走 selectedVoiceId，不依赖库）", (function () {
+    const stillOk = resolveVoice(isoFree, "free:zh-CN-XiaoxiaoNeural");
+    return stillOk.kind === "free" && voiceKeyErrorCode(isoFree, stillOk.voice) === null;
+  })());
+  check("mergeVoiceImport 也不吃 free（导入粘一行不会变成红色「缺ark-key」）", (function () {
+    const merged2 = mergeVoiceImport([{ id: "S_keep", kind: "clone" }], [{ id: "free:zh-CN-XiaoxiaoNeural", kind: "free" }]);
+    return merged2.length === 1 && merged2[0].id === "S_keep";
+  })(), JSON.stringify(mergeVoiceImport([{ id: "S_keep", kind: "clone" }], [{ id: "free:zh-CN-XiaoxiaoNeural", kind: "free" }])));
+  check("isVoicesLibraryId：key 音色放行 / free 家族拒绝", isVoicesLibraryId("S_DEMOCLONE9") === true && isVoicesLibraryId("V-1") === true
+    && isVoicesLibraryId("free:tw-chen") === false && isVoicesLibraryId("free:zh-TW-HsiaoChenNeural") === false);
+  // NTFS 交替数据流(ADS)泄漏：voice.id 含冒号，直接拼文件名会被解析成
+  // "宿主文件:数据流"，rmSync 删掉的是流、留下 0 字节宿主文件（每次合成漏一个）。
+  let adsSeen = "";
+  {
+    const captureSpawn = function (_py, argv) {
+      adsSeen = String(argv[argv.indexOf("--write-media") + 1] || "");
+      const dataHandlers = [];
+      const stream = { setEncoding: function () {}, on: function (ev, fn) { if (ev === "data") dataHandlers.push(fn); } };
+      const child = {
+        listeners: {},
+        stderr: stream,
+        stdout: stream,
+        on: function (ev, fn) { (child.listeners[ev] = child.listeners[ev] || []).push(fn); },
+        kill: function () {},
+        fire: function (ev) {
+          const a = Array.prototype.slice.call(arguments, 1);
+          (child.listeners[ev] || []).forEach(function (fn) { fn.apply(null, a); });
+        },
+      };
+      // 监听器是 executor 同步跑完之后才注册的，所以必须等一个 tick 再收场，
+      // 否则这个 await 永远不 resolve，整段自检卡死（写测试时踩过）。
+      setTimeout(function () { child.fire("close", 1); }, 0);
+      return child;
+    };
+    await synthesizeEdge({ text: "hi", voice: FREE_VOICES[1], config: isoFree, spawnImpl: captureSpawn });
+  }
+  const adsBase = adsSeen.split(/[\\/]/).pop();
+  check("免费音色临时文件名不含冒号（ADS 泄漏已堵）", adsSeen.length > 0 && adsBase.indexOf(":") < 0, adsSeen);
+  check("临时文件名仍带音色标识（出了问题认得出是谁的声音）", /^edge-\d+-free_tw-chen-cute\.mp3$/.test(adsBase), adsBase);
+
+  // 命令行拼装：参数只能是目录里的形状，异常值一律丢弃
+  const argsOk = edgeArgsFor("你好", { edgeVoice: "zh-TW-HsiaoChenNeural", pitch: "+25Hz", rate: "+8%" }, "C:/x/o.mp3");
+  check("edgeArgsFor 用 -m edge_tts 而非任意脚本", argsOk[0] === "-m" && argsOk[1] === "edge_tts", argsOk.join(" "));
+  check("edgeArgsFor 带 --no-progress（避免进度条写脏 stderr）", argsOk.indexOf("--no-progress") >= 0);
+  check("edgeArgsFor 正确带出 voice/pitch/rate/输出路径", argsOk[argsOk.indexOf("--voice") + 1] === "zh-TW-HsiaoChenNeural"
+    && argsOk[argsOk.indexOf("--pitch") + 1] === "+25Hz"
+    && argsOk[argsOk.indexOf("--rate") + 1] === "+8%"
+    && argsOk[argsOk.indexOf("--write-media") + 1] === "C:/x/o.mp3");
+  const argsBad = edgeArgsFor("你好", { edgeVoice: "V", pitch: "25Hz", rate: "8%" }, "o.mp3");
+  check("非 +NHz / +N% 形状的 pitch 被丢弃", argsBad.indexOf("--pitch") < 0, argsBad.join(" "));
+  check("非 +N% 形状的 rate 被丢弃", argsBad.indexOf("--rate") < 0);
+
+  // 语速滑块必须对免费音色同样生效（否则同一套 UI 两种行为）
+  check("edgeRateFor：语速 1.2 → +20%", edgeRateFor({ rate: "+0%" }, { speed_ratio: 1.2 }) === "+20%", edgeRateFor({ rate: "+0%" }, { speed_ratio: 1.2 }));
+  check("edgeRateFor：目录 rate 为基准叠加", edgeRateFor({ rate: "+8%" }, { speed_ratio: 0.5 }) === "-42%", edgeRateFor({ rate: "+8%" }, { speed_ratio: 0.5 }));
+  check("edgeRateFor：下限钳位", edgeRateFor({ rate: "+0%" }, { speed_ratio: 0.01 }) === "-90%");
+  check("edgeRateFor：上限钳位", edgeRateFor({ rate: "+0%" }, { speed_ratio: 9 }) === "+200%");
+  check("edgeRateFor：非法语速忽略而不是崩", edgeRateFor({ rate: "+8%" }, { speed_ratio: "abc" }) === "+8%");
+
+  // 前置闸门：这些路径必须在起进程之前就返回（不能误弹黑框、不能 reject）
+  const gated = await synthesizeEdge({ text: "   ", voice: FREE_VOICES[0], config: isoFree, spawnImpl: function () { throw new Error("must not spawn"); } });
+  check("空文本 → edge-empty-text（不起进程）", gated.ok === false && gated.reason === "edge-empty-text", JSON.stringify(gated));
+  const notFree = await synthesizeEdge({ text: "hi", voice: { id: "S_1", kind: "clone" }, config: isoFree, spawnImpl: function () { throw new Error("must not spawn"); } });
+  check("非 free 音色走 edge 口 → edge-not-free", notFree.ok === false && notFree.reason === "edge-not-free", JSON.stringify(notFree));
+
+  // 失败分类（假 child 必须带 stderr/stdout 流，否则测不到真实分类路径）
+  function fakeSpawn(prepare) {
+    return function () {
+      const dataHandlers = [];
+      const stream = { setEncoding: function () {}, on: function (ev, fn) { if (ev === "data") dataHandlers.push(fn); } };
+      const child = {
+        listeners: {}, stderr: stream, stdout: stream,
+        on: function (ev, fn) { (child.listeners[ev] = child.listeners[ev] || []).push(fn); },
+        kill: function () { child.killed = true; },
+        exitCode: null,
+        fire: function (ev) { const a = Array.prototype.slice.call(arguments, 1); (child.listeners[ev] || []).forEach(function (fn) { fn.apply(null, a); }); },
+        emitData: function (text) { dataHandlers.forEach(function (fn) { fn(text); }); },
+      };
+      prepare(child);
+      return child;
+    };
+  }
+  const modMissing = await synthesizeEdge({
+    text: "hi", voice: FREE_VOICES[0], config: isoFree,
+    spawnImpl: fakeSpawn(function (c) { setTimeout(function () { c.emitData("No module named 'edge_tts'"); c.fire("close", 1); }, 0); }),
+  });
+  check("stderr 含 No module named edge_tts → edge-tts-not-installed", modMissing.ok === false && modMissing.reason === "edge-tts-not-installed", JSON.stringify(modMissing));
+  const offline = await synthesizeEdge({
+    text: "hi", voice: FREE_VOICES[0], config: isoFree,
+    spawnImpl: fakeSpawn(function (c) { setTimeout(function () { c.emitData("getaddrinfo failed"); c.fire("close", 1); }, 0); }),
+  });
+  check("网络类 stderr → edge-offline（文案要告诉用户是网不通）", offline.ok === false && offline.reason === "edge-offline", JSON.stringify(offline));
+  const generic = await synthesizeEdge({
+    text: "hi", voice: FREE_VOICES[0], config: isoFree,
+    spawnImpl: fakeSpawn(function (c) { setTimeout(function () { c.emitData("KeyboardInterrupt"); c.fire("close", 2); }, 0); }),
+  });
+  check("未知失败 → edge-failed（不谎报成缺模块）", generic.ok === false && generic.reason === "edge-failed", JSON.stringify(generic));
+  const noOutput = await synthesizeEdge({
+    text: "hi", voice: FREE_VOICES[0], config: isoFree,
+    spawnImpl: fakeSpawn(function (c) { setTimeout(function () { c.fire("close", 0); }, 0); }),
+  });
+  check("退出码 0 但没产出文件 → 判失败（不返回空音频）", noOutput.ok === false, JSON.stringify(noOutput));
+  const threw = await synthesizeEdge({ text: "hi", voice: FREE_VOICES[0], config: isoFree, spawnImpl: function () { throw new Error("boom"); } });
+  check("spawn 抛异常 → 变成返回值而不是 reject", threw.ok === false && threw.reason === "edge-spawn-failed", JSON.stringify(threw));
+  const errEvent = await synthesizeEdge({
+    text: "hi", voice: FREE_VOICES[0], config: isoFree,
+    spawnImpl: fakeSpawn(function (c) { setTimeout(function () { c.fire("error", new Error("ENOENT")); }, 0); }),
+  });
+  check("child error 事件被接住（不炸宿主 web server）", errEvent.ok === false, JSON.stringify(errEvent));
+
+  // 可用性探测：只读判据，绝不合成、绝不播放
+  const rt = edgeRuntimeStatus(isoFree, { spawnSyncImpl: function () { return { status: 0 }; } });
+  check("edgeRuntimeStatus 报告 python+edgeTts 双真", rt.python === true && rt.edgeTts === true, JSON.stringify(rt));
+  const rtNo = edgeRuntimeStatus(isoFree, { spawnSyncImpl: function () { return { status: 1 }; } });
+  check("import 失败时 edgeTts=false（界面据此提示 pip install）", rtNo.python === true && rtNo.edgeTts === false, JSON.stringify(rtNo));
+}
+
+// ------------------------------------------------- 18. v0.4.17 e2e 缺陷回归（D1~D6）
+
+section("18. v0.4.17 端到端复核发现的缺陷已修（当前选择/悬空归位/伪造 free id/指纹音色/探测缓存）");
+
+// 一个能当 POST body 用的假请求：路由里的 readJsonBody 靠 data/end 事件取体。
+function postReq(url, bodyValue, remoteAddress) {
+  const raw = JSON.stringify(bodyValue);
+  const handlers = {};
+  return {
+    url,
+    method: "POST",
+    socket: { remoteAddress: remoteAddress || "127.0.0.1" },
+    on(event, callback) {
+      handlers[event] = callback;
+      if (event === "data") setTimeout(function () { callback(Buffer.from(raw, "utf8")); }, 0);
+      if (event === "end") setTimeout(function () { callback(); }, 1);
+    },
+    destroy() {},
+  };
+}
+
+const d18Dir = mkdtempSync(join(tmpdir(), "dsh-voice-alert-d18-"));
+const d18Ctx = mount(
+  {
+    voices: [
+      { id: "S_A", note: "A", kind: "clone", enabled: true },
+      { id: "S_B", note: "B", kind: "clone", enabled: true },
+    ],
+    selectedVoiceId: "S_B",
+    tts: { apiKey: "D18-CLONE-KEY", speaker: "S_A" },
+  },
+  { tmpDir: d18Dir, webServer: true },
+);
+const saveRoute = d18Ctx.ctx._routes.find((r) => r.path === "/dsh-voice-alert/voices/save");
+
+// D1：当前选择有效时，一个乱串绝不能把它换掉（旧版会顺手归位到 voices[0]）。
+{
+  const res = fakeRes();
+  await saveRoute.handler(postReq("/dsh-voice-alert/voices/save", { selectedVoiceId: "free:../../evil garbage" }), res);
+  const payload = JSON.parse(res.body);
+  check(
+    "D1 乱串被拒绝且**不动**当前选择（旧版会悄悄换成 S_A）",
+    res.status === 200 && payload.saved.selectedVoiceId === "S_B",
+    JSON.stringify(payload.saved),
+  );
+  check(
+    "D1 拒绝要留日志（用户看得见为什么没生效）",
+    d18Ctx.logs.some((line) => String(line).indexOf("ignored unknown selectedVoiceId") >= 0),
+    d18Ctx.logs.slice(-3).join(" | "),
+  );
+}
+
+// 合法 free id 仍然可以直接选中并立即生效（不写进 voices）。
+{
+  const res = fakeRes();
+  await saveRoute.handler(postReq("/dsh-voice-alert/voices/save", { selectedVoiceId: "free:tw-chen" }), res);
+  const payload = JSON.parse(res.body);
+  check(
+    "免费音色可被设为当前（保存返回即生效）",
+    payload.saved.selectedVoiceId === "free:tw-chen" && payload.freeVoices.length === 7,
+    JSON.stringify({ sel: payload.saved.selectedVoiceId, free: payload.freeVoices.length }),
+  );
+  check(
+    "设成免费音色后 voices 一个字没多（目录不落盘）",
+    payload.saved.voices === 2,
+    JSON.stringify(payload.saved),
+  );
+}
+
+// D2：只发 voices、把当前选中的那行删掉 → 选择不能悬空，必须归位到剩下第一个。
+{
+  const seed = fakeRes();
+  await saveRoute.handler(postReq("/dsh-voice-alert/voices/save", { selectedVoiceId: "S_B" }), seed);
+  check("D2 前置：先把当前选择设成库里的 S_B", JSON.parse(seed.body).saved.selectedVoiceId === "S_B", seed.body.slice(0, 120));
+  const res = fakeRes();
+  await saveRoute.handler(postReq("/dsh-voice-alert/voices/save", { voices: [{ id: "S_A", note: "A", kind: "clone", enabled: true }] }), res);
+  const payload = JSON.parse(res.body);
+  check(
+    "D2 删掉当前选中的音色后不再悬空（归位到 S_A）",
+    payload.saved.selectedVoiceId === "S_A",
+    JSON.stringify(payload.saved),
+  );
+  check(
+    "D2 归位要留日志",
+    d18Ctx.logs.some((line) => String(line).indexOf("selection fell back to") >= 0),
+    d18Ctx.logs.slice(-3).join(" | "),
+  );
+  // 反向：选择是合法 free id 时，删掉某个库音色**不能**把它顶走（free 不在库里也仍有效）。
+  const seedFree = fakeRes();
+  await saveRoute.handler(postReq("/dsh-voice-alert/voices/save", { selectedVoiceId: "free:tw-yu" }), seedFree);
+  const resKeep = fakeRes();
+  await saveRoute.handler(postReq("/dsh-voice-alert/voices/save", { voices: [{ id: "S_A", note: "A", kind: "clone", enabled: true }] }), resKeep);
+  check(
+    "D2 反向：当前是免费音色时，保存音色库绝不能把它顶走",
+    JSON.parse(resKeep.body).saved.selectedVoiceId === "free:tw-yu",
+    resKeep.body.slice(0, 160),
+  );
+}
+
+// D4：/voices/probe 对畸形 free id 必须 400，而不是当 preset 转给上游。
+{
+  let upstreamCalls = 0;
+  const probeMount = mount(
+    {
+      voices: [{ id: "S_A", note: "A", kind: "clone", enabled: true }],
+      selectedVoiceId: "S_A",
+      presetApiKey: "D18-ARK-KEY", // 故意配上 key：旧版会把恶意串一路发出去
+      tts: { apiKey: "D18-CLONE-KEY", speaker: "S_A" },
+    },
+    {
+      tmpDir: mkdtempSync(join(tmpdir(), "dsh-voice-alert-d4-")),
+      webServer: true,
+      fetchImpl: function () {
+        upstreamCalls++;
+        return Promise.resolve({ ok: true, status: 200, text: function () { return Promise.resolve("{}\n"); } });
+      },
+    },
+  );
+  const probeR = probeMount.ctx._routes.find((r) => r.path === "/dsh-voice-alert/voices/probe");
+  const badRes = fakeRes();
+  await probeR.handler(postReq("/dsh-voice-alert/voices/probe", { speakerId: "free:../../etc/passwd" }), badRes);
+  const badPayload = JSON.parse(badRes.body);
+  check(
+    "D4 畸形 free id → 400 unknown-free-voice（不再冒充 preset 发给厂商）",
+    badRes.status === 400 && badPayload.reason === "unknown-free-voice",
+    JSON.stringify({ status: badRes.status, payload: badPayload }),
+  );
+  check("D4 且一次上游调用都没发出", upstreamCalls === 0, String(upstreamCalls));
+}
+
+// D3：指纹必须记「本次真正用的音色」，否则覆盖合成后换音色会被判没变。
+{
+  const fpCfg = Object.assign({}, shapeConfig, { selectedVoiceId: "free:tw-chen" });
+  const baseFp = fingerprintFor("complete", fpCfg);
+  const overFp = fingerprintFor("complete", fpCfg, "free:tw-chen-cute");
+  check(
+    "D3 指纹默认取 selectedVoiceId",
+    baseFp.speaker === "free:tw-chen",
+    JSON.stringify(baseFp.speaker),
+  );
+  check(
+    "D3 传入覆盖音色时指纹跟着变（关键：旧版永远记 selectedVoiceId）",
+    overFp.speaker === "free:tw-chen-cute" && overFp.text === baseFp.text,
+    JSON.stringify(overFp.speaker),
+  );
+  const d3Dir = mkdtempSync(join(tmpdir(), "dsh-voice-alert-d3-"));
+  const d3Cfg = Object.assign({}, planConfig, {
+    audioDir: d3Dir,
+    audioOriginDir: join(d3Dir, "origin"),
+    audioBackupsDir: join(d3Dir, "backups"),
+    generateStateFile: join(d3Dir, "state.json"),
+    selectedVoiceId: "free:tw-chen",
+  });
+  for (const kind of ["complete", "fail", "approval"]) writeFileSync(loudFileFor(kind, d3Cfg), "x", "utf8");
+  writeGenerateState(d3Cfg, {
+    complete: fingerprintFor("complete", d3Cfg, "free:tw-chen-cute"),
+    fail: fingerprintFor("fail", d3Cfg, "free:tw-chen-cute"),
+    approval: fingerprintFor("approval", d3Cfg, "free:tw-chen-cute"),
+  });
+  const d3Plain = planChanges(d3Cfg, ["complete"]);
+  const d3Override = planChanges(d3Cfg, ["complete"], { speakerId: "free:tw-yu" });
+  const d3SameOverride = planChanges(d3Cfg, ["complete"], { speakerId: "free:tw-chen-cute" });
+  check(
+    "D3 磁盘上录的是覆盖音色时，换成别的覆盖音色必须判脏（不再 nothing-changed）",
+    d3Override.changed.length === 1,
+    JSON.stringify({ override: d3Override.changed, reused: d3Override.reused }),
+  );
+  check(
+    "D3 用回当初那个覆盖音色才允许复用",
+    d3SameOverride.reused.length === 1 && d3SameOverride.changed.length === 0,
+    JSON.stringify({ changed: d3SameOverride.changed, reused: d3SameOverride.reused }),
+  );
+  check(
+    "D3 不带覆盖（按 selectedVoiceId）与「录的是覆盖音色」的状态不一致 → 判脏重录",
+    d3Plain.changed.length === 1,
+    JSON.stringify({ plainChanged: d3Plain.changed, plainReused: d3Plain.reused }),
+  );
+}
+
+// D6：ffmpeg 探测要缓存（省内存/减少面板首屏等待）。
+{
+  const probeOnce = resolveFfmpeg(sfxCfg);
+  const probeTwice = resolveFfmpeg(sfxCfg);
+  check(
+    "D6 第二次探测命中缓存（返回同一对象，不再 spawnSync）",
+    probeOnce === probeTwice,
+    JSON.stringify(probeTwice),
+  );
+  const probeFresh = resolveFfmpeg(sfxCfg, { noCache: true });
+  check(
+    "D6 noCache 仍可强制重探（装了 ffmpeg 不用重启）",
+    probeFresh !== probeOnce && (typeof probeFresh.path === "string" || probeFresh.path === null),
+    JSON.stringify(probeFresh),
+  );
+}
+
+// D5：edge 两个目录必须是可配置键（换不了盘 / 多实例共用缓存是实测踩出来的）。
+{
+  const d5Dir = mkdtempSync(join(tmpdir(), "dsh-voice-alert-d5-"));
+  const d5Cfg = Object.assign({}, DEFAULT_CONFIG, {
+    edgeCacheDir: join(d5Dir, "my-cache"),
+    edgeTmpDir: join(d5Dir, "my-tmp"),
+  });
+  check("D5 edgeCacheDir 走配置键", d5Cfg.edgeCacheDir === join(d5Dir, "my-cache"), String(d5Cfg.edgeCacheDir));
+  check("D5 edgeTmpDir 走配置键", d5Cfg.edgeTmpDir === join(d5Dir, "my-tmp"), String(d5Cfg.edgeTmpDir));
+  let d5TmpArg = "";
+  // §17 的 isoFree 在它自己的块作用域里，这里另建一份同等夹具（绝不读用户真实 config.json）。
+  const d5Iso = resolveConfig(undefined, { configPath: null, env: {} });
+  await synthesizeEdge({
+    text: "hi",
+    voice: FREE_VOICES[0],
+    config: Object.assign({}, d5Iso, { edgeTmpDir: d5Dir }),
+    spawnImpl: function (_file, args) {
+      const at = args.indexOf("--write-media");
+      d5TmpArg = at >= 0 ? String(args[at + 1]) : "";
+      const listeners = {};
+      const stream = { setEncoding: function () {}, on: function () {} };
+      const child = {
+        stderr: stream,
+        stdout: stream,
+        on: function (ev, fn) { (listeners[ev] = listeners[ev] || []).push(fn); },
+        kill: function () {},
+        exitCode: null,
+      };
+      // 必须异步 close：不 fire 的话这个 await 会一直挂到 90s 超时（自检曾经就是这么卡住的）。
+      setTimeout(function () { (listeners.close || []).forEach(function (fn) { fn(1); }); }, 0);
+      return child;
+    },
+  });
+  check(
+    "D5 合成临时文件确实落在配置指定的目录",
+    d5TmpArg.indexOf(String(d5Dir)) === 0,
+    d5TmpArg,
+  );
+  const d5Defaults = resolveConfig(undefined, { configPath: null, env: {} });
+  check(
+    "D5 默认值仍在插件数据目录内（不配也不坏）",
+    typeof d5Defaults.edgeCacheDir === "string" && d5Defaults.edgeCacheDir.indexOf("edge-cache") >= 0 &&
+      typeof d5Defaults.edgeTmpDir === "string" && d5Defaults.edgeTmpDir.indexOf("edge-tmp") >= 0,
+    JSON.stringify({ cache: d5Defaults.edgeCacheDir, tmp: d5Defaults.edgeTmpDir }),
+  );
+}
+
+
+section("19. 第三轮 e2e 复核发现的缺陷已修（/generate 闸门 + free 名长度上限）");
+
+// D7：畸形 free id 的闸门以前只加在 /voices/probe，/generate 照收不误 →
+// resolveVoice 当 inline preset，配了 Agent Plan Key 的机器真打上游白烧额度。
+{
+  let genUpstream = 0;
+  const genMount = mount(
+    {
+      voices: [{ id: "S_A", note: "A", kind: "clone", enabled: true }],
+      selectedVoiceId: "S_A",
+      presetApiKey: "D19-ARK-KEY",
+      tts: { apiKey: "D19-CLONE-KEY", speaker: "S_A" },
+    },
+    {
+      tmpDir: mkdtempSync(join(tmpdir(), "dsh-voice-alert-d7-")),
+      webServer: true,
+      fetchImpl: function () {
+        genUpstream++;
+        return Promise.resolve({ ok: true, status: 200, text: function () { return Promise.resolve("{}\n"); } });
+      },
+    },
+  );
+  const genRoute = genMount.ctx._routes.find((r) => r.path === "/dsh-voice-alert/generate");
+  const genRes = fakeRes();
+  await genRoute.handler(
+    postReq("/dsh-voice-alert/generate", { kinds: ["complete"], force: true, speakerId: "free:../../etc/passwd" }),
+    genRes,
+  );
+  const genPayload = JSON.parse(genRes.body);
+  check(
+    "D7 /generate 对畸形 free id 直接 400（不再返回半个失败的 202）",
+    genRes.status === 400 && genPayload.reason === "unknown-free-voice",
+    JSON.stringify({ status: genRes.status, payload: genPayload }),
+  );
+  check("D7 且一次上游调用都没发出（额度没白烧）", genUpstream === 0, String(genUpstream));
+  check(
+    "D7 拒绝要留日志",
+    genMount.logs.some((line) => String(line).indexOf("generate refused: malformed free voice id") >= 0),
+    genMount.logs.slice(-3).join(" | "),
+  );
+
+  // 合法 free id 不能被这道闸误伤（否则功能被自己锁死）。
+  const okRes = fakeRes();
+  const okMountRoute = genMount.ctx._routes.find((r) => r.path === "/dsh-voice-alert/voices/probe");
+  await okMountRoute.handler(postReq("/dsh-voice-alert/voices/probe", { speakerId: "free:tw-chen" }), okRes);
+  check(
+    "D7 合法 free id 不被闸门误伤（probe 走到真合成分支，状态码不是 400 unknown-free-voice）",
+    JSON.parse(okRes.body).reason !== "unknown-free-voice",
+    okRes.body.slice(0, 160),
+  );
+}
+
+// D8：自定义 free 名字必须有长度上限，否则试听缓存文件名会超 MAX_PATH，
+// 写盘 ENOENT 只记日志 → 每次试听都悄悄重新联网合成。
+{
+  const longName = "free:zh-CN-" + "a".repeat(300);
+  check(
+    "D8 超长自定义 free 名不再被当成合法音色（否则缓存文件名炸 MAX_PATH）",
+    isFreeVoiceId(longName) === false,
+    String(isFreeVoiceId(longName)),
+  );
+  check("D8 超长名字被认成「畸形 free id」→ 各路由 400", isMalformedFreeVoiceId(longName) === true, String(isMalformedFreeVoiceId(longName)));
+  const fit = "free:zh-CN-" + "a".repeat(FREE_VOICE_NAME_MAX - 6);
+  const overflow = "free:zh-CN-" + "a".repeat(FREE_VOICE_NAME_MAX - 5);
+  check(
+    "D8 边界：恰好 " + FREE_VOICE_NAME_MAX + " 字符仍合法、多一个就拒",
+    isFreeVoiceId(fit) === true && isFreeVoiceId(overflow) === false,
+    JSON.stringify({ fit: isFreeVoiceId(fit), overflow: isFreeVoiceId(overflow) }),
+  );
+  // 面板只发 7 条目录 id，这条是 API 面：路由必须当场拒绝，而不是 200 后静默重合成。
+  const audMount = mount(
+    { voices: [{ id: "S_A", note: "A", kind: "clone", enabled: true }], selectedVoiceId: "S_A", tts: { apiKey: "D19-CLONE-KEY", speaker: "S_A" } },
+    { tmpDir: mkdtempSync(join(tmpdir(), "dsh-voice-alert-d8-")), webServer: true },
+  );
+  const audRoute = audMount.ctx._routes.find((r) => r.path === "/dsh-voice-alert/free/audition");
+  const audRes = fakeRes();
+  await audRoute.handler(postReq("/dsh-voice-alert/free/audition", { speakerId: longName }), audRes);
+  check(
+    "D8 /free/audition 对超长 free 名直接 400（不再 200 假装成功）",
+    audRes.status === 400,
+    JSON.stringify({ status: audRes.status, body: audRes.body.slice(0, 140) }),
+  );
+}
+
+section("20. 客户端界面静态一致性（悬浮提示 / 一行放下 / 主题令牌 / 字号档位）");
+{
+check(
+  "hidden carriers still rendered (save reads them; DOM always present)",
+  ["complete", "fail", "approval"].every(
+    (kind) => Boolean(domNodes.get("dva-sfx-" + kind)),
+  ),
+  "",
+);
+  // 插件根目录（本轮误删过，补回）。
+  const pluginDir = fileURLToPath(new URL("..", import.meta.url));
+  // §20 的源码基底（块内多处断言要用）。
+  const client = readFileSync(join(pluginDir, "lib", "client.js"), "utf8");
+  // 「怎么提醒你」卡真·一行（用户 2026-10-25 截图三支红箭头 + 「同理这个也弄成一行」）。
+  // 旧结构 title-row / top-row / divider-mode / mode-title / alert-mode 是五个独立块，
+  // 天生三行以上；合并后这四个 key 必须不再出现，四个控件必须同住 key: "main-top"。
+  check(
+    "20p 「播报开关」卡顶栏 + 提醒方式真·一行（四控件同 div，旧独立块已删，点完即存仍在）",
+    (() => {
+      const i = client.indexOf('key: "main-top"');
+      if (i < 0) return false;
+      // 块尾锚点：音效面板已删（第十三轮），改取下一段（dva-status）。
+      const j = client.indexOf('id: "dva-status-box"', i);
+      if (j < 0) return false;
+      const blk = client.slice(i, j);
+      return (
+        blk.indexOf('id: "dva-big-preview"') > 0 &&
+        blk.indexOf('id: "dva-audio-tip"') > 0 &&
+        // 模式按钮 id 是运行时拼接的（"dva-alert-mode-" + mode），块内只出现前缀：
+        !/key: "top-row"/u.test(client) &&
+        !/key: "mode-title"/u.test(client) &&
+        !/key: "alert-mode"/u.test(client) &&
+        !/key: "divider-mode"/u.test(client) &&
+        blk.indexOf("persistPatch(") > 0 &&
+        /flexWrap: "wrap", minWidth: "0"/u.test(blk) &&
+        // 第十七轮：状态盒内部左右两栏（status-text 左 / dva-voice 右），
+        // 顶栏不再有音色 span
+        j > 0 &&
+        /var cardHead = \{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "nowrap", minWidth: "0" \}/u.test(client)
+      );
+    })(),
+    "",
+  );
+  // 音效的导出/导入**并入三条行的动作组**（第十三轮：音效模式下「⬇ 下载」变
+  // 「⬇ 导出」、「⬆ 导入」换成提示音；独立面板已删 —— 界面与语音模式完全一致）。
+  const hostIndexSrc = readFileSync(join(pluginDir, "lib", "index.js"), "utf8");
+  check(
+    "20q 音效导出/导入并入三条行动作组（宿主两条路由 + 面板内提示 + 独立面板已删）",
+    /\/sfx\/download/u.test(hostIndexSrc) &&
+      /\/sfx\/import/u.test(hostIndexSrc) &&
+      /function downloadSfx\(/u.test(client) &&
+      /function importSfx\(key, kind\)/u.test(client) &&
+      /function sfxIoFailReason\(/u.test(client) &&
+      /function sfxNote\(/u.test(client) &&
+      !/key: "sfx-panel"/u.test(client) &&
+      !/id: "dva-sfx-io-pick"/u.test(client) &&
+      /downloadSfx\(\(cache\.sfxByKind \|\| \{\}\)\[kind\]\)/u.test(client) &&
+      /importSfx\(\(cache\.sfxByKind \|\| \{\}\)\[kind\], kind\)/u.test(client) &&
+      /\(cache\.alertMode \|\| "voice"\) === "sfx" \? "⬇ 导出" : "⬇ 下载"/u.test(client) &&
+      !/id: "dva-sfx-note"/u.test(client) &&
+      /persistPatch\(patch, "已切换为「" \+ sfxNameOf\(key\) \+ "」的提醒音（立即生效）"/u.test(client) &&
+      /function persistPatch\(patch, okMessage, before, onOk\)/u.test(client),
+    "",
+  );
+  // 音效面板行与音色库行同源，按同一套不变量加固（独立复核指出它是同类潜伏隐患）。
+  check(
+    "20l3 音效面板行同源加固（容器 nowrap + 曲名可收缩 + 按钮不缩不折）",
+    /var sfxRowStyle = \{[^}]*flexWrap: "nowrap"[^}]*minWidth: 0/u.test(client) &&
+      /var sfxNameStyle = \{ flex: "0 1 auto", minWidth: 0/u.test(client) &&
+      /var sfxBtnMini = \{[\s\S]{0,400}?flex: "0 0 auto",[\s\S]{0,200}?whiteSpace: "nowrap"/u.test(client),
+    "",
+  );
+
+  check(
+    "20a 总开关存在状态徽标 dva-enabled-state，并有 applyEnabledBadge() 负责刷新",
+    /dva-enabled-state/.test(client) && /function applyEnabledBadge\(\)/.test(client),
+    "",
+  );
+  // persistPatch 的失败回滚 + 保存设置成功分支都必须刷徽标，
+  // 否则「勾了勾选框、徽标仍写已禁用」会让人以为开关没生效。
+  const badgeRefs = (client.match(/applyEnabledBadge\(\)/g) || []).length;
+  check("20b 徽标刷新点 >= 3（定义处 + 回滚 + 保存成功）", badgeRefs >= 4, "refs=" + badgeRefs);
+
+  // 「生成语音」按钮的禁用只能由 currentVoiceReady() 决定：任何一处漏改，
+  // 免费音色用户都会看到按钮永久置灰。合法形态有三种：
+  //   ① 直接 !currentVoiceReady()；② 提交中置灰 true；③ refreshGenerateGate 内部用 ready。
+  const gateLines = client.split("\n").filter((l) => /setDisabled\("dva-generate"/.test(l));
+  const badGates = gateLines.filter(
+    (l) => !/currentVoiceReady\(\)/.test(l) && !/!ready\b/.test(l) && !/, true\)/.test(l),
+  );
+  check(
+    "20c dva-generate 的每处禁用都走 currentVoiceReady()",
+    gateLines.length > 0 && badGates.length === 0,
+    JSON.stringify({ total: gateLines.length, bad: badGates.map((l) => l.trim()) }),
+  );
+
+  // 同一张面板里字号只允许 11 / 11.5 / 12 / 12.5 / 13 / 13.5 这几档。
+  // 15px 曾被用户点名为「字体太大太稀疏」，固化成断言防止回潮。
+  check(
+    "20d 设置面板无 15px 及以上的字号（用户反馈字体过大）",
+    !/fontSize:\s*"1[5-9]px"|fontSize:\s*"[2-9]\dpx"/.test(client),
+    String(((client.match(/fontSize:\s*"[0-9.]+px"/g) || []).sort())),
+  );
+
+  // 顶部大按钮组已按用户要求移除，只剩卡片内的单条动作组。
+  check(
+    "20e 顶部「下载/导入 MP3」大按钮组与 mp3-tip 已移除",
+    !/dva-big-download|dva-big-import|mp3-tip/.test(client),
+    "",
+  );
+
+  // persistPatch 是命令式改 DOM、不触发 React 重渲染 —— 凡是由 cache 渲染的
+  // 生成按钮，在改完音色库/新增音色/试听成功之后都必须手动刷一次。
+  check(
+    "20f 音色库保存/新增/试听成功后都刷新了生成按钮",
+    /refreshGenerateGate/.test(client) && (client.match(/refreshGenerateGate\(/g) || []).length >= 8,
+    "refs=" + ((client.match(/refreshGenerateGate\(/g) || []).length),
+  );
+
+  // 2026-10-26 用户实测「音色库每次重载都消失」：section 是 React 槽位，宿主重渲染
+  // 会把 #dva-voice-rows 重建为空 div，命令式塞进去的行全部丢失，而 loadSettings
+  // 被 cache.loaded 挡住不再跑，界面停在「读取中…」+ 空库。修复 = 重挂载时
+  // cache.loaded 已真就重放 loadVoices()（幂等 GET）+ refreshAllActionGroups()。
+  check(
+    "20r 重挂载自愈：cache.loaded 时 SettingsSection 重放 loadSettings（自带 loadVoices），带 1.5s 节流",
+    client.includes("} else if (cache.loaded) {") &&
+      /else if \(cache\.loaded\) \{[\s\S]*?cache\.lastSelfHealAt[\s\S]*?loadSettings\(\);/.test(client),
+    "remount self-heal branch present in SettingsSection"
+  );
+  check(
+    "20r2 重挂载自愈分支在 loadSettings 守卫的同一 try 内（首装路径不受影响）",
+    /if \(!cache\.loaded && !cache\.loading\) \{[\s\S]*?loadSettings\(\);[\s\S]*?\} else if \(cache\.loaded\) \{/.test(client),
+    "first-mount path intact, self-heal in same try"
+  );
+
+  // 2026-10-26 用户实测「音色库需要 key 的那几行没有删除按钮」：根因是 libRight
+  // 容器创建了却从未 append 到 row —— 备注框 / probe 输出 / 「删除」按钮全成了
+  // 游离节点。断言必须锁住「右栏挂回 row」这一条，光查按钮字面量还在测不到复发。
+  check(
+    "20s 音色库行的右栏容器 libRight 必须 append 到 row（否则删除按钮看不见）",
+    /libRight\.appendChild\(delBtn\);[\s\S]{0,120}?row\.appendChild\(libRight\);/.test(client) &&
+      /var libRight = document\.createElement\("span"\);/.test(client),
+    "libRight mounted back onto row"
+  );
+  check(
+    "20s2 音色库行左栏 libLeft 承载 idSpan + avail 并挂回 row（两栏同构）",
+    /libLeft\.appendChild\(idSpan\);/.test(client) &&
+      /libLeft\.appendChild\(avail\);[\s\S]{0,80}?row\.appendChild\(libLeft\);/.test(client),
+    "libLeft carries idSpan+avail and is mounted"
+  );
+  check(
+    "20s3 我的音色库行内不再有游离的 row.appendChild(avail/setBtn) 旧写法（免费行不算：它不分两栏）",
+    (function () {
+      var at = client.indexOf("我的音色库");
+      if (at < 0) return false;
+      var tail = client.slice(at, at + 20000);
+      var end = tail.indexOf("box.replaceChildren");
+      var seg = end > 0 ? tail.slice(0, end) : tail;
+      return !/^\s+row\.appendChild\((avail|setBtn|idSpan)\);$/m.test(seg);
+    })(),
+    "library-row segment free of orphan appends"
+  );
+
+  // 2026-10-26 用户要求删除按钮真的能删：原先只改 cache，必须再点「保存音色库」
+  // 才落盘，重载又回来。现在点完即存。
+  check(
+    "20t 删除按钮点完即存（POST /voices/save），不是只改 cache 等下次保存",
+    /var removed = voice\.note \|\| voice\.id;[\s\S]{0,900}?request\("\/voices\/save"[\s\S]{0,1600}?已删除/.test(client),
+    "delete persists immediately"
+  );
+
+  // 自愈必须「只在真被抹掉时」才重放，否则每次重渲染都 loadSettings 会把用户正在
+  // 输入的音色备注冲掉。判定 = 等一帧后看 #dva-voice-rows 是否空 / 音量行是否还在
+  // 「读取中…」。
+  check(
+    "20u 自愈只在真被抹掉时触发（rows 空 或 音量行仍「读取中」），不是无条件重放",
+    /setTimeout\(function \(\) \{[\s\S]{0,400}?var rowsWiped[\s\S]{0,200}?var volWiped[\s\S]{0,200}?if \(!rowsWiped && !volWiped\) return;/.test(client),
+    "wiped-detection guard present"
+  );
+  check(
+    "20u2 自愈走 setTimeout(0) 延后一帧判定（React commit 在组件函数返回之后）",
+    /setTimeout\(function \(\) \{[\s\S]{0,400}?watchRowsContainer\(\);[\s\S]{0,900}?loadSettings\(\);[\s\S]{0,400}?\}, 0\);/.test(client),
+    "deferred to next tick"
+  );
+
+  // ---- 20v：音色库容器防抹（用户 2026-10-26：「不要出现有时候不显示的音色库内容」）
+  // 光靠 setTimeout 自愈是「下一帧才补」，中间那一帧界面是空的 —— 用户看到的就是
+  // 「有时候不显示」。必须用 MutationObserver 在 React 清空的同一轮里同步重画。
+  check(
+    "20v 音色库容器挂了 MutationObserver（React 清空时同步重画，不留空帧）",
+    /function watchRowsContainer\(\)[\s\S]{0,2000}?new MO\(function \(\) \{ healVoiceRows\(\); \}\)/.test(client),
+    "observer installed"
+  );
+  check(
+    "20v2 观察器只观察 childList 且在「被清空」时才补画（自己写入不递归）",
+    /observe\(box, \{ childList: true \}\);/.test(client) &&
+      /var empty = !node\.children \|\| node\.children\.length === 0;/.test(client) &&
+      /if \(!empty\) return;/.test(client),
+    "childList + empty-only guard"
+  );
+  // 槽位被 React 整个换成新节点时，旧观察器跟着旧节点一起失效 —— 只盯容器自身
+  // 会漏掉这种「换节点」式抹除，必须同时盯父节点，并在回调里发现节点换了就重挂。
+  check(
+    "20v2b 观察器同时盯槽位父节点（React 换节点式抹除也能在同一轮发现）",
+    /observe\(box\.parentElement, \{ childList: true \}\);/.test(client),
+    "parent observed"
+  );
+  check(
+    "20v2c 补画入口发现槽位换了新节点就先重挂观察器",
+    /if \(cache\.rowsWatched !== node\) watchRowsContainer\(\);/.test(client),
+    "re-watch on node swap"
+  );
+  check(
+    "20v3 renderVoiceRows 用 rowsRendering 闸门包住 replaceChildren，并每次重挂观察器",
+    /cache\.rowsRendering = true;[\s\S]{0,200}?box\.replaceChildren\.apply\(box, rows\);[\s\S]{0,200}?cache\.rowsRendering = false;[\s\S]{0,200}?watchRowsContainer\(\);/.test(client),
+    "recursion gate + re-watch"
+  );
+  check(
+    "20v4 容器空但 cache 有数据时直接重画，不再走一趟网络",
+    /if \(rowsWiped && \(cache\.voices\.length > 0 \|\| cache\.freeVoices\.length > 0\)\) \{[\s\S]{0,120}?renderVoiceRows\(\);/.test(client),
+    "cache-only repaint"
+  );
+  check(
+    "20v5 空 cache（首装未读到）不补画，保留「读取中…」提示",
+    /if \(cache\.voices\.length === 0 && cache\.freeVoices\.length === 0\) return;/.test(client),
+    "no repaint on empty cache"
+  );
+  // React 会把整棵 section 卸掉再挂一棵新的 —— 那时槽位节点根本不存在，挂在容器
+  // 上的观察器无从下手。必须在 body 上留一个「槽位出生」看门狗。
+  check(
+    "20v6 body 上挂了槽位出生看门狗（subtree 观察，发现槽位空就补画）",
+    /function ensureSlotGuard\(\)[\s\S]{0,1200}?cache\.slotGuard = new MO\(function \(\) \{ healVoiceRows\(\); \}\)[\s\S]{0,200}?observe\(root, \{ childList: true, subtree: true \}\)/.test(client),
+    "body-level guard installed"
+  );
+  check(
+    "20v7 看门狗只挂一个（cache.slotGuard 已存在就直接返回）",
+    /function ensureSlotGuard\(\) \{[\s\S]{0,120}?if \(cache\.slotGuard\) return;/.test(client),
+    "single guard"
+  );
+  check(
+    "20v8 renderVoiceRows 与 SettingsSection 都先 ensureSlotGuard（首装与重挂都覆盖）",
+    (client.match(/ensureSlotGuard\(\);/g) || []).length >= 2 &&
+      /function renderVoiceRows\(\) \{[\s\S]{0,200}?ensureSlotGuard\(\);/.test(client) &&
+      /function SettingsSection\(\) \{[\s\S]{0,400}?ensureSlotGuard\(\);/.test(client),
+    "guard armed at both entry points"
+  );
+
+  // ---- 20w：删除按钮不得因「正在使用」而禁用（用户 2026-10-26 再次反馈
+  // 「音色库需要 key 没有删除的按钮」）。库里只有一个克隆音色时，被禁用的删除
+  // 按钮等于「没有删除按钮」。删掉当前音色由宿主 D2 归位兜底。
+  check(
+    "20w 删除按钮恒可用（不再因 inUse 被禁用）",
+    /delBtn\.style\.cssText = btnMini;[\s\S]{0,120}?delBtn\.disabled = false;/.test(client),
+    "delete always enabled"
+  );
+  check(
+    "20w2 删除按钮不再出现「不可删除」的禁用文案",
+    !/正在使用的克隆音色不可删除/.test(client),
+    "no disabled tooltip"
+  );
+  check(
+    "20w3 删除当前音色时给出归位提示（不会留下悬空选择）",
+    /当前正在使用；删除后会自动切到库里第一个音色/.test(client),
+    "fallback hint present"
+  );
+  check(
+    "20w4 宿主 /voices/save 在选中项悬空时归位到第一个音色",
+    /currentStillValid[\s\S]{0,300}?config\.selectedVoiceId = fallbackVoice;/.test(hostIndexSrc),
+    "host D2 fallback present"
+  );
+  check(
+    "20w5 客户端回填 selectedVoiceId 用 !== undefined 判（删空时空串是合法值）",
+    /cache\.selectedVoiceId = data\.selectedVoiceId !== undefined \? data\.selectedVoiceId : cache\.selectedVoiceId;/.test(client),
+    "empty selection honored"
+  );
+  // ---- 20x：试听悬浮气泡「出框 / 显示不完整」（用户 2026-10-26：
+  // 「试听的展开消息显示不完整出框了」）----
+  // 为什么只能这么测：假 DOM 的 style 是空对象、没有布局引擎，CSS 里
+  // position:absolute + overflow 裁剪完全测不出来。所以分两层——
+  //  ① 源码静态断言：定位器存在、只挂一次、宽度/位置确实被夹紧、滚动缩放会重算；
+  //  ② 桩几何功能测试：给 placeTip 喂假矩形，断言它真的把气泡夹回可见区域内。
+  // 缺了第②层，第①层就只是「函数名写了」的自嗨（本项目已踩过多次同类坑）。
+  check(
+    "20x 悬浮气泡定位器三件套齐备（placeTip / tipClipRect / ensureTipPlacement）",
+    /function tipClipRect\(wrap\)/.test(client) &&
+      /function placeTip\(wrap\)/.test(client) &&
+      /function ensureTipPlacement\(\)/.test(client),
+    "tip placement helpers present",
+  );
+  check(
+    "20x2 定位器只挂一次（cache.tipPlacement 闸门）+ 面板入口武装 + 测试面导出",
+    /function ensureTipPlacement\(\) \{[\s\S]{0,120}?if \(cache\.tipPlacement\) return;/.test(client) &&
+      (client.match(/ensureTipPlacement\(\);/g) || []).length >= 1 &&
+      /function SettingsSection\(\) \{[\s\S]{0,600}?ensureTipPlacement\(\);/.test(client) &&
+      /placeTip: placeTip/.test(client),
+    "single placement listener",
+  );
+  check(
+    "20x3 浮出时按可用宽度夹紧 maxWidth/minWidth（不再写死 300px 撞出边界）",
+    /bubble\.style\.maxWidth = Math\.min\(300, avail\) \+ "px"/.test(client) &&
+      /bubble\.style\.minWidth = Math\.min\(180, avail\) \+ "px"/.test(client),
+    "width clamped to available space",
+  );
+  check(
+    "20x4 水平位置夹回可见区 + 下方不够高时翻到上方展开",
+    /if \(left \+ br\.width > cr\.right - TIP_EDGE_PAD\) left = cr\.right - TIP_EDGE_PAD - br\.width;/.test(client) &&
+      /if \(left < cr\.left \+ TIP_EDGE_PAD\) left = cr\.left \+ TIP_EDGE_PAD;/.test(client) &&
+      /bubble\.style\.bottom = "calc\(100% \+ 4px\)"/.test(client),
+    "clamped horizontally + vertical flip",
+  );
+  check(
+    "20x5 滚动 / 窗口缩放时按新位置重算（不是只在 hover 那一刻算一次）",
+    /window\.addEventListener\("scroll", onReflow, true\)/.test(client) &&
+      /window\.addEventListener\("resize", onReflow, false\)/.test(client) &&
+      /if \(cache\.tipActive\) placeTip\(cache\.tipActive\);/.test(client),
+    "reflow on scroll/resize",
+  );
+  // 桩几何功能测试：把 placeTip 当成纯函数喂假矩形，验证它真的会夹。
+  (() => {
+    const ui = clientExports.__dvaTest;
+    const savedWindow = globalThis.window;
+    const savedBody = globalThis.document && globalThis.document.body;
+    // 造一个「锚点 + 气泡 + 一个带 overflow:auto 的祖先容器」的假 DOM。
+    function makeTip(opts) {
+      const wrapStyle = {};
+      const bubbleStyle = {};
+      const bubble = {
+        style: bubbleStyle,
+        getBoundingClientRect() {
+          const w = Math.min(opts.bubbleW, parseFloat(bubbleStyle.maxWidth) || opts.bubbleW);
+          const l = opts.anchorLeft + (parseFloat(bubbleStyle.left) || 0);
+          return { left: l, right: l + w, top: 0, bottom: opts.bubbleH, width: w, height: opts.bubbleH };
+        },
+      };
+      const wrap = {
+        style: wrapStyle,
+        parentNode: opts.clip
+          ? {
+              nodeType: 1,
+              parentNode: null,
+              getBoundingClientRect() {
+                return { left: opts.clip.left, right: opts.clip.right, top: opts.clip.top, bottom: opts.clip.bottom, width: opts.clip.right - opts.clip.left, height: opts.clip.bottom - opts.clip.top };
+              },
+            }
+          : null,
+        querySelector(sel) {
+          return sel === ".dva-tip-bubble" ? bubble : null;
+        },
+        getBoundingClientRect() {
+          return { left: opts.anchorLeft, right: opts.anchorLeft + opts.anchorW, top: opts.anchorTop, bottom: opts.anchorTop + opts.anchorH, width: opts.anchorW, height: opts.anchorH };
+        },
+      };
+      return { wrap, bubble };
+    }
+    globalThis.window = {
+      innerWidth: 1024,
+      innerHeight: 768,
+      getComputedStyle() {
+        return { overflowX: "auto", overflowY: "auto" };
+      },
+    };
+    try {
+      // ① 窄容器：可用宽度 200px，气泡想占 300px —— 必须夹到 184px（200 - 8*2）。
+      const narrow = makeTip({ anchorLeft: 12, anchorTop: 10, anchorW: 14, anchorH: 14, bubbleW: 300, bubbleH: 60, clip: { left: 12, right: 212, top: 0, bottom: 768 } });
+      const r1 = ui.placeTip(narrow.wrap);
+      check(
+        "20x6 窄面板下气泡宽度被夹到可用宽度内（300 → 184），且整体落在可见区",
+        r1 && r1.width === 184 && r1.inside === true,
+        JSON.stringify(r1),
+      );
+      // ② 锚点贴右边缘：气泡整体左移，不能顶出右边。
+      const rightEdge = makeTip({ anchorLeft: 390, anchorTop: 10, anchorW: 14, anchorH: 14, bubbleW: 300, bubbleH: 60, clip: { left: 12, right: 412, top: 0, bottom: 768 } });
+      const r2 = ui.placeTip(rightEdge.wrap);
+      check(
+        "20x7 锚点贴右边缘时气泡整体左移，右边界不越界",
+        r2 && r2.inside === true && r2.left + r2.width <= 412,
+        JSON.stringify(r2),
+      );
+      // ③ 下方只剩 54px、气泡高 100px → 翻到锚点上方。
+      const bottom = makeTip({ anchorLeft: 100, anchorTop: 700, anchorW: 14, anchorH: 14, bubbleW: 200, bubbleH: 100, clip: { left: 12, right: 412, top: 0, bottom: 768 } });
+      const r3 = ui.placeTip(bottom.wrap);
+      check(
+        "20x8 下方空间不够时气泡翻到锚点上方展开",
+        r3 && r3.flipped === true,
+        JSON.stringify(r3),
+      );
+      // ④ 没有裁剪祖先时退化为视口，且不抛错（旧行为不能因为加固而挂掉）。
+      const plain = makeTip({ anchorLeft: 100, anchorTop: 100, anchorW: 14, anchorH: 14, bubbleW: 200, bubbleH: 60, clip: null });
+      const r4 = ui.placeTip(plain.wrap);
+      check(
+        "20x9 无裁剪祖先时退化为视口边界，仍返回结果不抛错",
+        r4 && r4.inside === true && r4.clip.right === 1024,
+        JSON.stringify(r4),
+      );
+    } finally {
+      globalThis.window = savedWindow;
+      if (globalThis.document && savedBody === undefined) {
+        // 假 document 本来就没有 body，保持原状
+      }
+    }
+  })();
+}
 
 section("summary");
 console.log("  passed: " + passed);
