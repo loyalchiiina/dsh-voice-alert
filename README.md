@@ -1,5 +1,10 @@
 # dsh-voice-alert
 
+> **功能描述**：每个 turn 结束播报完成、出错时播失败提示，用户中断默认不播，子代理默认跳过。三种方式：语音（火山 TTS，支持克隆与预设音色，指纹复用不重复合成）、音效（内置 20 个，可分配给完成/失败/审批并单独试听，零配置）、关闭。走 winmm 播放，不改系统音量。仅 Windows。适配 DSH 内核 0.2.2-rc.1。
+>
+> **English**: Voice or sound cue when a turn finishes and a failure cue when a tool call or turn errors; user aborts stay silent and subagent sessions are skipped by default. Three modes: voice (Volcengine TTS with cloned or preset voices, fingerprint reuse so unchanged text is not re-synthesised), effects (20 built-in sounds assignable to done, fail and approval with per-row preview, no API key) and off. Plays through winmm without touching system volume. Windows only. Adapts DSH kernel 0.2.2-rc.1.
+
+
 DSH（DeepSeek Harness）**对话语音播报插件**：一轮对话结束自动播报「完成」语音，
 出现错误 / 工具失败时播报「失败」语音。播放**绝不改动系统音量或静音状态**。
 
