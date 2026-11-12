@@ -1,5 +1,7 @@
 # dsh-voice-alert
 
+> 本文件是英文 README 的翻译版，可能滞后于最新版本；功能与变更以 `README.md` 与 `CHANGELOG.md` 为准。
+
 > 把任务里程碑、报错与完成情况朗读出来，人可以离开屏幕去干别的。
 
 > 完整文档以 [English README](./README.md) 为准，本页提供中文导读与关键信息速查。

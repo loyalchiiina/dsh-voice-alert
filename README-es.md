@@ -1,5 +1,7 @@
 # Voice Alert
 
+> 本文件是英文 README 的翻译版，可能滞后于最新版本；功能与变更以 `README.md` 与 `CHANGELOG.md` 为准。
+
 > Speak task milestones, errors and completions out loud so you can step away from the screen.
 
 > Full documentation: [English README](./README.md)
