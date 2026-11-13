@@ -1,8 +1,8 @@
 # dsh-voice-alert
 
-> **功能描述**：每个 turn 结束播报完成、出错时播失败提示，用户中断默认不播，子代理默认跳过。三种方式：语音（火山 TTS，支持克隆与预设音色，指纹复用不重复合成）、音效（内置 20 个，可分配给完成/失败/审批并单独试听，零配置）、关闭。走 winmm 播放，不改系统音量。仅 Windows。适配 DSH 内核 0.2.2-rc.1。
+> **功能描述**：每个 turn 结束播报完成、出错时播失败提示，用户中断默认不播，子代理默认跳过。三种方式：语音（火山 TTS，支持使用在火山引擎「声音复刻」克隆好的音色 ID 与预设音色，指纹复用不重复合成）、音效（内置 20 个，可分配给完成/失败/审批并单独试听，零配置）、关闭。走 winmm 播放，不改系统音量。仅 Windows。适配 DSH 内核 0.2.2-rc.1。
 >
-> **English**: Voice or sound cue when a turn finishes and a failure cue when a tool call or turn errors; user aborts stay silent and subagent sessions are skipped by default. Three modes: voice (Volcengine TTS with cloned or preset voices, fingerprint reuse so unchanged text is not re-synthesised), effects (20 built-in sounds assignable to done, fail and approval with per-row preview, no API key) and off. Plays through winmm without touching system volume. Windows only. Adapts DSH kernel 0.2.2-rc.1.
+> **English**: Voice or sound cue when a turn finishes and a failure cue when a tool call or turn errors; user aborts stay silent and subagent sessions are skipped by default. Three modes: voice (Volcengine TTS with a voice ID cloned on Volcengine Voice Cloning, or preset voices; fingerprint reuse so unchanged text is not re-synthesised), effects (20 built-in sounds assignable to done, fail and approval with per-row preview, no API key) and off. Plays through winmm without touching system volume. Windows only. Adapts DSH kernel 0.2.2-rc.1.
 
 
 DSH（DeepSeek Harness）**对话语音播报插件**：一轮对话结束自动播报「完成」语音，
@@ -13,11 +13,22 @@ DSH（DeepSeek Harness）**对话语音播报插件**：一轮对话结束自动
 
 > 设置页实拍（v0.4.26，DSH 原生设置分区「语音播报」）：① **播报开关与模式**（语音 / 音效 / 关闭三选一，可一键试听）；② **播报内容自定义**（完成 / 报错 / 审批三条文案可改，可导入导出、逐条试听）；③ **音色库**（免费内置 7 个音色无需 Key，也可填火山引擎 Key 使用自己的克隆音色）。Key、克隆音色 ID 与本机路径已脱敏。配色跟随宿主主题（浅色 / 深色都清晰），窄面板下控件自动换行不溢出。
 
+> **界面说明的呈现方式**：面板里**不再有常驻的说明段落**（会把设置面板撑得很长）。改用**悬浮 ⓘ / ❓ 提示**——鼠标悬停在图标上才展开对应的说明文字，面板保持一屏紧凑。
+
 **让 DSH 干完活会开口说话** —— 装完即用，零配置：内置 **20 个音效**、三条播报文案（完成 / 失败 / 审批，
 其中审批只能手动触发），
-想用自己的声音再按 §4.1 一键克隆。**支持三种提醒方式**：🗣 语音播报 / 🎵 音效 / 🔕 关闭。
+想用自己的声音：先到火山引擎「声音复刻」上传录音克隆音色（拿到 `S_` 开头的音色 ID），再按 §4.1 填进音色库。**支持三种提醒方式**：🗣 语音播报 / 🎵 音效 / 🔕 关闭。
+
+**平台**：**仅 Windows**（播放器走 winmm/MCI「原样播放」——系统音量多大就多大，系统静音就无声；插件**从不读写**系统音量或静音接口）。
 
 **v0.4.26（当前版本）** 收口八个小版本：**分类静音真正生效**（宿主 `POST /settings` 现在把 `silentKinds` 合并进内存配置并落盘，不再「点了静音本轮照响、下次打开又弹回未静音」）+ **铃铛换成内联 SVG**（静音时斜杠显示、整颗变红带淡红底，不再依赖 emoji 字体有没有 🔕 字形；状态切换就地重画不重建 DOM）+ **静音按钮回到事件名右侧**且点了即时变色 + **设置页导航图标改成喇叭 + 声波**（注册 `settings.section.icon` 槽，不再回退通用齿轮）+ **「⚙ 高级」并进常用那一行**（提醒方式三按钮同排 nowrap、按钮同步瘦身，一屏放得下不用滚动；高级栏顶部有「← 返回常用设置」）+ 新增**检查更新**按钮（有新版可一键安装到 desktop profile，装完需彻底退出 DSH 再启动）。v0.4.18 的四类界面修复（音色库不消失 / 不闪 / 可见删除按钮 / 试听气泡不出框）与 v0.4.17 的界面紧凑化 + 免费音色见下。
+
+**v0.4.22 ~ v0.4.25 的界面演进**（当前形态即由此而来）：
+
+* **v0.4.22** 设置面板分成**两栏切换**：常用设置 / 高级设置（API Key、音色库、系统音量原来挤在同一页）。
+* **v0.4.23** 高级设置**并进顶部切换栏同一行**（常用 / 音色库 / API Key / 系统音量），一行 nowrap 不换行；高级栏顶部有「← 返回常用设置」。
+* **v0.4.24** 铃铛按钮的属性覆盖修复（切模式后颜色/斜杠状态不再错乱）。
+* **v0.4.25** 设置页**导航图标改成喇叭 + 声波**（与插件语义相符，不再回退通用齿轮）。
 
 * **🆓 免费内置音色（详见 §4.3）**：新增第三条音色路线 `free` = 微软 **edge-tts**（不要任何 API Key）。
   音色库顶部一组「🆓 免费内置音色 · 无需 Key」共 **7 个试听音色**（台湾腔甜美女声打头），
@@ -205,7 +216,7 @@ different one when something failed, plus a settings-section voice library.
 | 立即错误播报（工具失败/agent 报错当下，节流 5s） | 失败 | 同上 |
 | 手动验证（HTTP 路由）**仅手动** | 完成/失败/审批 | `voice-alert-approval-poetic-loud.mp3` |
 
-> **自动播报只有「完成 / 失败」两种。** 上表最后一行是手动触发的验证入口（`/play?kind=approval`），
+> **自动播报只有「完成 / 失败」两种。** 上表最后一行是手动触发的验证入口（`/dsh-voice-alert/play?kind=approval`），
 > 不是自动事件 —— 插件没有监听任何权限/审批类 DSH 事件。详见 §3 末尾的说明。
 
 音频**永不改动系统音量与静音状态**：播放器用 winmm/MCI「原样播放」（系统多大就多大，系统静音就无声），
@@ -311,7 +322,7 @@ different one when something failed, plus a settings-section voice library.
 | 提醒（10） | 叮咚 / 电话铃 / 消息提示 / 闹钟 / 滴滴 / 清脆叮 / 钟声 / 成功号角 / 欢快音 / 木鱼 |
 | 大自然（10） | 鸟鸣 / 蝉鸣 / 蛙鸣 / 雨声 / 海浪 / 溪流 / 风声 / 篝火 / 雷鸣 / 森林 |
 
-* **默认分配**：完成 → 成功号角，失败 → 木鱼，审批 → 叮咚（`sfxByKind`，可逐个更换）。审批槽位只在手动触发时用到（`/play?kind=approval` 或控制文件），不会自动响。
+* **默认分配**：完成 → 成功号角，失败 → 木鱼，审批 → 叮咚（`sfxByKind`，可逐个更换）。审批槽位只在手动触发时用到（`/dsh-voice-alert/play?kind=approval` 或控制文件），不会自动响。
 * **选择方式**（v0.4.17 第十三 / 十四轮改版）：**每条事件一行**（完成 / 失败 / 审批），中段是一个**下拉框**（`dva-sfxselect-<kind>`，20 个音效按「🔔 提醒音 / 🌿 大自然」分组），选中即生效并落盘；同一位置旁边是「▶ 试听 / ⬇ 导出 / ⬆ 导入」。语音模式与音效模式**预渲染两套同构行**（`dva-row-voice-<kind>` / `dva-row-sfx-<kind>`），切模式只翻 `display`、零 React 重渲染，界面即时切换。
 * **试听**：「▶ 试听」走 `GET /sfx/play?name=<key>`，**不经过引擎**，绝不会影响完成/失败的判定；v0.3.4 起试听会**排队**（等上一个播完），连点不再出现"没声音"。
 * **完整性**：`GET /sfx/list` 返回目录 + 每个文件是否在库（`present`）。v0.4.17 起界面**不再**显示「共 20 个内置音效，已在库 N 个」这行文字（用户要求精简，第十七轮删除）。

@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "Voice Alert",
-    "description": "Announce task completion and errors out loud so you can step away from the screen. Ships 20 built-in sound effects that work with zero config and no API key, or clone your own voice; three alert modes: voice / sound effect / off."
+    "description": "Announce task completion and errors out loud so you can step away from the screen. Ships 20 built-in sound effects that work with zero config and no API key, and can read your lines with a voice ID you cloned on Volcengine Voice Cloning (this plugin does not record or train voices — it only plays them); three alert modes: voice / sound effect / off."
   }
 }

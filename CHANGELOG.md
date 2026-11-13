@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.27
+
+### 文档修正（功能一致性审计）
+- 音色口径改正：**使用在火山引擎「声音复刻」克隆好的音色 ID**（插件不提供录音与训练，只负责播放），原来写的「也可克隆自己的音色」属能力夸大。
+- 播放路由补全前缀：`/dsh-voice-alert/play?kind=approval`。
+- README 补「**仅 Windows**（winmm/MCI 原样播放，不改系统音量）」与 v0.4.22 ~ v0.4.25 的界面演进四条。
+- `package.json` keywords 去掉与口径不符的「声音克隆」。
+
 ## 0.4.26
 
 - 修：分类静音点了不生效、状态还会回弹 —— 宿主 `POST /settings` 从没把 `silentKinds` 写进内存 `config`，本轮播放仍响、下一次 GET 又回到 false。现在 POST 里合并进 `config.silentKinds` 并落盘。
@@ -328,7 +336,7 @@ README 顶部宣传区换成 **0.4.18 双图并排**：左 = 语音播报模式�
 | # | 位置 | 原写法 | 实际行为 | 取证 |
 |---|---|---|---|---|
 | 1 | README 提醒方式表 / 首段 | 「自动播报完成/失败/审批」 | 自动播报**只有完成 / 失败**两种 | 只监听 `session/event`（turn 结束）、`agent/error`、`tools/result`；`engine.js` 无任何权限/审批事件监听 |
-| 2 | README 手动验证表 | 「完成/失败/审批」并列，读起来像三事件都自动 | `approval` 仅能手动触发 `GET /play?kind=approval` / `preview` / 控制文件 | 同上 |
+| 2 | README 手动验证表 | 「完成/失败/审批」并列，读起来像三事件都自动 | `approval` 仅能手动触发 `GET /dsh-voice-alert/play?kind=approval` / `preview` / 控制文件 | 同上 |
 | 3 | README `alertMode` 表 | `voice` 标为「默认」 | 默认是 **`sfx`**（装完即用，不需要 Key） | `lib/config.js:223` `alertMode` 默认值 `"sfx"` |
 | 4 | README 断言数 | 278 项（完整 299） | **312 项**（`--no-sound`）/ 完整模式 **335 项** | `node test/self-check.mjs --no-sound` 实跑 |
 | 5 | README 处理链 | `alimiter=limit=0.98` | `limit=0.95`（峰值压 0.95≈−0.45 dBFS） | 实际 ffmpeg 参数 |
